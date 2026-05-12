@@ -9,12 +9,12 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore", case_sensitive=False)
 
     bot_token: str = Field(alias="BOT_TOKEN")
-    bot_username: str = Field(default="bunaistore_bot", alias="BOT_USERNAME")
+    bot_username: str = Field(default="banhmistore_bot", alias="BOT_USERNAME")
     admin_ids_raw: str = Field(default="", alias="ADMIN_IDS")
     support_group_id: int = Field(default=0, alias="SUPPORT_GROUP_ID")
     channel_url: str = Field(default="", alias="CHANNEL_URL")
     admin_username: str = Field(default="", alias="ADMIN_USERNAME")
-    default_lang: str = Field(default="vi", alias="DEFAULT_LANG")
+    default_lang: str = Field(default="en", alias="DEFAULT_LANG")
 
     database_url: str = Field(alias="DATABASE_URL")
 
@@ -31,6 +31,12 @@ class Settings(BaseSettings):
     binance_pay_secret: str = Field(default="", alias="BINANCE_PAY_SECRET")
     binance_pay_id: str = Field(default="", alias="BINANCE_PAY_ID")
     binance_pay_name: str = Field(default="", alias="BINANCE_PAY_NAME")
+
+    # Binance Spot account — poll deposit history for incoming USDT
+    binance_api_key: str = Field(default="", alias="BINANCE_API_KEY")
+    binance_api_secret: str = Field(default="", alias="BINANCE_API_SECRET")
+    binance_bep20_address: str = Field(default="", alias="BINANCE_BEP20_ADDRESS")
+    binance_trc20_address: str = Field(default="", alias="BINANCE_TRC20_ADDRESS")
 
     bscscan_api_key: str = Field(default="", alias="BSCSCAN_API_KEY")
     bep20_deposit_address: str = Field(default="", alias="BEP20_DEPOSIT_ADDRESS")
@@ -55,6 +61,13 @@ class Settings(BaseSettings):
     api_host: str = Field(default="0.0.0.0", alias="API_HOST")
     api_port: int = Field(default=8080, alias="API_PORT")
     webhook_hmac_secret: str = Field(default="change_me", alias="WEBHOOK_HMAC_SECRET")
+
+    # Web admin panel (HTTP Basic auth)
+    admin_user: str = Field(default="admin", alias="ADMIN_USER")
+    admin_password: str = Field(default="", alias="ADMIN_PASSWORD")
+
+    # Channel for new-product auto-post (bot must be admin)
+    channel_id: int = Field(default=0, alias="CHANNEL_ID")
 
     deposit_poll_interval: int = Field(default=30, alias="DEPOSIT_POLL_INTERVAL")
 

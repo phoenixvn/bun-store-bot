@@ -6,11 +6,13 @@ from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select
 
+from bot.admin_web import router as admin_router
 from bot.database import session_scope
 from bot.models import ApiKey, Order, User
 from bot.services.order import BuyError, buy_product
 
-app = FastAPI(title="Bun Store Developer API", version="1.0")
+app = FastAPI(title="Bami Store Developer API", version="1.0")
+app.include_router(admin_router)
 
 
 async def auth(x_api_key: str = Header(...)) -> int:
@@ -77,4 +79,23 @@ async def buy(body: BuyBody, user_id: int = Depends(auth)):
 
 @app.get("/")
 async def root():
-    return {"name": "Bun Store API", "endpoints": ["/v1/balance", "/v1/orders", "/v1/buy"]}
+    return {"name": "Bami Store API", "endpoints": ["/v1/balance", "/v1/orders", "/v1/buy"]}
+
+
+@app.get("/healthz")
+async def healthz():
+    from sqlalchemy import text as sql_text
+
+    from bot.bot_instance import bot
+
+    db_ok = False
+    try:
+        async with session_scope() as s:
+            await s.execute(sql_text("SELECT 1"))
+            db_ok = True
+    except Exception:
+        pass
+    bot_ok = bot is not None
+    if db_ok and bot_ok:
+        return {"status": "ok", "db": True, "bot": True}
+    raise HTTPException(503, f"unhealthy db={db_ok} bot={bot_ok}")

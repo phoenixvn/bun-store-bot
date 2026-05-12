@@ -122,7 +122,30 @@ async def admin_actions(cb: CallbackQuery, state: FSMContext) -> None:
             users = await s.scalar(select(func.count(User.id)))
             orders = await s.scalar(select(func.count(Order.id)))
             revenue = await s.scalar(select(func.coalesce(func.sum(Order.total), 0)))
-        await cb.message.answer(f"👥 Users: {users}\n📦 Orders: {orders}\n💰 Revenue: {revenue} USDT")
+            method_rows = (
+                await s.execute(
+                    select(
+                        Deposit.method,
+                        func.count(Deposit.id),
+                        func.coalesce(func.sum(Deposit.amount), 0),
+                    )
+                    .where(Deposit.status == DepositStatus.APPROVED.value)
+                    .group_by(Deposit.method)
+                )
+            ).all()
+        lines = [
+            f"👥 Users: {users}",
+            f"📦 Orders: {orders}",
+            f"💰 Revenue: {revenue} USDT",
+            "",
+            "*Deposits by method (A/B):*",
+        ]
+        if method_rows:
+            for method, cnt, total in method_rows:
+                lines.append(f"• `{method}` — {cnt} dep, {total} USDT")
+        else:
+            lines.append("_No approved deposits yet._")
+        await cb.message.answer("\n".join(lines), parse_mode="Markdown")
     elif action == "bcast":
         await state.set_state("broadcast_msg")  # type: ignore
         await cb.message.answer("📣 Gửi nội dung broadcast:")

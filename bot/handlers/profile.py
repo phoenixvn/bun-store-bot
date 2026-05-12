@@ -79,6 +79,105 @@ async def orders(cb: CallbackQuery) -> None:
     await cb.answer()
 
 
+@router.callback_query(F.data.startswith("deposits:"))
+async def deposits_history(cb: CallbackQuery) -> None:
+    from bot.database import session_scope
+    from bot.models import Deposit
+    from sqlalchemy import func, select
+    from bot.utils import fmt_usdt
+
+    page = int(cb.data.split(":")[1])
+    user = await get_or_create_user(cb.from_user.id, cb.from_user.username, cb.from_user.full_name)
+    lang = user.language
+    per_page = 10
+    async with session_scope() as s:
+        total = await s.scalar(
+            select(func.count(Deposit.id)).where(Deposit.user_id == user.id)
+        ) or 0
+        rows = (
+            await s.execute(
+                select(Deposit)
+                .where(Deposit.user_id == user.id)
+                .order_by(Deposit.id.desc())
+                .limit(per_page)
+                .offset(page * per_page)
+            )
+        ).scalars().all()
+    import math
+    pages = max(1, math.ceil(total / per_page))
+    icon = {"approved": "✅", "pending": "⏳", "rejected": "❌"}
+    lines = ["💸 *Deposit history*\n"]
+    if not rows:
+        lines.append("_No deposits yet._")
+    for d in rows:
+        lines.append(
+            f"{icon.get(d.status, '•')} `{d.method}` {fmt_usdt(d.amount)} USDT — {d.created_at.strftime('%m-%d %H:%M')}"
+        )
+    kb_rows: list[list[InlineKeyboardButton]] = []
+    nav: list[InlineKeyboardButton] = []
+    if page > 0:
+        nav.append(InlineKeyboardButton(text=t(lang, "prev"), callback_data=f"deposits:{page-1}"))
+    if page + 1 < pages:
+        nav.append(InlineKeyboardButton(text=t(lang, "next"), callback_data=f"deposits:{page+1}"))
+    if nav:
+        kb_rows.append(nav)
+    kb_rows.append([back_btn(lang, "profile")])
+    try:
+        await cb.message.edit_text(
+            "\n".join(lines),
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows),
+            parse_mode="Markdown",
+        )
+    except Exception:
+        await cb.message.answer(
+            "\n".join(lines),
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows),
+            parse_mode="Markdown",
+        )
+    await cb.answer()
+
+
+@router.callback_query(F.data.startswith("order:"))
+async def order_detail(cb: CallbackQuery) -> None:
+    from bot.database import session_scope
+    from bot.models import Order, StockItem
+    from sqlalchemy import select
+    from bot.utils import fmt_usdt
+
+    user = await get_or_create_user(cb.from_user.id, cb.from_user.username, cb.from_user.full_name)
+    lang = user.language
+    order_id = int(cb.data.split(":")[1])
+    async with session_scope() as s:
+        o = await s.get(Order, order_id)
+        if not o or o.user_id != user.id:
+            await cb.answer("❌", show_alert=True)
+            return
+        items = (
+            await s.execute(select(StockItem).where(StockItem.order_id == order_id))
+        ).scalars().all()
+        payloads = [it.payload for it in items]
+    lines = [
+        f"🧾 *Order #{o.id}*",
+        f"📦 {o.product_name} x{o.quantity}",
+        f"💰 Total: {fmt_usdt(o.total)} USDT",
+        f"🎁 Discount: {o.discount_percent}%",
+        f"📅 {o.created_at.strftime('%Y-%m-%d %H:%M')}",
+        f"Status: {o.status}",
+    ]
+    if payloads:
+        lines.append("")
+        lines.append("*Keys/Payloads:*")
+        lines.extend(f"`{p}`" for p in payloads)
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[[InlineKeyboardButton(text=t(lang, "back"), callback_data="orders:0")]]
+    )
+    try:
+        await cb.message.edit_text("\n".join(lines), reply_markup=kb, parse_mode="Markdown")
+    except Exception:
+        await cb.message.answer("\n".join(lines), reply_markup=kb, parse_mode="Markdown")
+    await cb.answer()
+
+
 @router.callback_query(F.data == "earn")
 async def earn(cb: CallbackQuery) -> None:
     from bot.services import referral_stats

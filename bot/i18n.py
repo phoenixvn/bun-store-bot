@@ -49,6 +49,8 @@ T: dict[str, dict[str, str]] = {
         "buy_success": "✅ Mua thành công {qty}x {name}\n💰 Tổng: {total} USDT\n\n{payload}",
         "deposit_menu": "Nạp Ví",
         "binance_pay": "🟡 Binance Pay",
+        "binance_spot_bep20": "🟠 USDT BEP-20 → Binance",
+        "binance_spot_trc20": "🟠 USDT TRC-20 → Binance",
         "usdt_bep20": "🟢 USDT (BEP-20)",
         "ton": "🔵 TON",
         "tron": "🔴 Tron",
@@ -56,11 +58,11 @@ T: dict[str, dict[str, str]] = {
         "binance_instructions": (
             "🟡 *Binance Pay*\n\n"
             "*Pay ID:* `{pay_id}`\n"
-            "*Tên Binance Pay:* {pay_name}\n\n"
-            "1️⃣ Gửi bất kỳ số USDT nào đến Pay ID trên\n"
-            "2️⃣ Dán Order ID bên dưới\n\n"
-            "⚠️ _Chỉ tối đa 3 chữ số thập phân sẽ được cộng vào ví của bạn._\n\n"
-            "Vui lòng gửi *Order ID* bên dưới:"
+            "*Tên:* {pay_name}\n\n"
+            "1️⃣ Mở Binance app → Pay → Send → nhập Pay ID `{pay_id}`\n"
+            "2️⃣ Chọn *USDT*, gửi *chính xác* số tiền bạn nhập bên dưới\n"
+            "3️⃣ Bot sẽ tự cộng balance trong ~30 giây sau khi nhận\n\n"
+            "_Nhập số tiền bạn sẽ gửi (VD: 5.25):_"
         ),
         "bep20_instructions": (
             "🟢 *USDT (BEP-20)*\n\n"
@@ -77,6 +79,18 @@ T: dict[str, dict[str, str]] = {
             "Địa chỉ ví: `{address}`\n\n"
             "Gửi USDT trên mạng Tron (TRC-20). Số dư sẽ được cộng tự động."
         ),
+        "binance_spot_bep20_instructions": (
+            "🟠 *Nạp USDT BEP-20 vào Binance*\n\n"
+            "Địa chỉ ví Binance (BSC): `{address}`\n\n"
+            "Gửi USDT trên mạng BSC (BEP-20) đến địa chỉ Binance ở trên. "
+            "Bot sẽ tự động phát hiện qua API Binance trong 1-2 phút sau khi xác nhận."
+        ),
+        "binance_spot_trc20_instructions": (
+            "🟠 *Nạp USDT TRC-20 vào Binance*\n\n"
+            "Địa chỉ ví Binance (Tron): `{address}`\n\n"
+            "Gửi USDT trên mạng Tron (TRC-20) đến địa chỉ Binance ở trên. "
+            "Bot sẽ tự động phát hiện qua API Binance trong 1-2 phút sau khi xác nhận."
+        ),
         "other_instructions": "💡 Vui lòng liên hệ admin để được hỗ trợ phương thức khác.",
         "deposit_received": "✅ Đã nhận nạp {amount} USDT. Số dư mới: {balance} USDT",
         "deposit_invalid": "❌ Order ID không hợp lệ hoặc chưa thanh toán. Thử lại.",
@@ -88,7 +102,8 @@ T: dict[str, dict[str, str]] = {
             "📅 Tham gia: `{joined}`"
         ),
         "notifications": "🔔 Thông báo",
-        "my_orders": "💼 Đơn hàng của tôi",
+        "my_orders": "💼 Đơn hàng",
+        "my_deposits": "💸 Lịch sử nạp",
         "dev_api": "🗄 API Nhà phát triển",
         "language": "🌐 Ngôn ngữ (EN/VI/ZH/ID)",
         "select_lang": "Vui lòng chọn ngôn ngữ:",
@@ -181,24 +196,41 @@ T["en"] = {
     "buy_success": "✅ Bought {qty}x {name}\n💰 Total: {total} USDT\n\n{payload}",
     "deposit_menu": "Top up Wallet",
     "binance_pay": "🟡 Binance Pay",
+    "binance_spot_bep20": "🟠 USDT BEP-20 → Binance",
+    "binance_spot_trc20": "🟠 USDT TRC-20 → Binance",
     "usdt_bep20": "🟢 USDT (BEP-20)",
     "ton": "🔵 TON",
     "tron": "🔴 Tron",
     "other": "💡 Other",
     "binance_instructions": (
         "🟡 *Binance Pay*\n\n*Pay ID:* `{pay_id}`\n*Name:* {pay_name}\n\n"
-        "1️⃣ Send any USDT amount to the Pay ID above\n2️⃣ Paste Order ID below\n\n"
-        "⚠️ _Only up to 3 decimals will be credited._\n\nPlease send *Order ID*:"
+        "1️⃣ Binance app → Pay → Send → enter Pay ID `{pay_id}`\n"
+        "2️⃣ Pick *USDT*, send *exactly* the amount you'll enter below\n"
+        "3️⃣ Bot auto-credits within ~30s\n\n"
+        "_Enter the amount you'll send (e.g. 5.25):_"
     ),
     "bep20_instructions": "🟢 *USDT (BEP-20)*\n\nAddress: `{address}`\n\nSend USDT on BSC. Auto-credit in 1-3 min.",
     "ton_instructions": "🔵 *TON*\n\nAddress: `{address}`\n\nSend TON. Auto-credit in USDT.",
     "tron_instructions": "🔴 *USDT (TRC-20)*\n\nAddress: `{address}`\n\nSend USDT on Tron.",
+    "binance_spot_bep20_instructions": (
+        "🟠 *Deposit USDT BEP-20 to Binance*\n\n"
+        "Binance address (BSC): `{address}`\n\n"
+        "Send USDT on BEP-20 to the address above. "
+        "Bot auto-detects via Binance API within 1-2 min after confirmation."
+    ),
+    "binance_spot_trc20_instructions": (
+        "🟠 *Deposit USDT TRC-20 to Binance*\n\n"
+        "Binance address (Tron): `{address}`\n\n"
+        "Send USDT on TRC-20 to the address above. "
+        "Bot auto-detects via Binance API within 1-2 min after confirmation."
+    ),
     "other_instructions": "💡 Contact admin for other methods.",
     "deposit_received": "✅ Deposit received: {amount} USDT. New balance: {balance} USDT",
     "deposit_invalid": "❌ Invalid Order ID or not paid. Try again.",
     "profile_card": "🧑 *User Profile*\n\n🆔 ID: `{id}`\n💳 Balance: `{balance}` USDT\n🌐 Language: `{lang_code}`\n📅 Joined: `{joined}`",
     "notifications": "🔔 Notifications",
     "my_orders": "💼 My Orders",
+    "my_deposits": "💸 Deposit history",
     "dev_api": "🗄 Developer API",
     "language": "🌐 Language",
     "select_lang": "Please select your language:",
@@ -246,8 +278,8 @@ for code in ("zh", "id", "es", "ru", "ar"):
 
 
 def t(lang: str | None, key: str, /, **kwargs) -> str:
-    lang = lang or "vi"
-    val = T.get(lang, {}).get(key) or T["vi"].get(key) or T["en"].get(key) or key
+    lang = lang or "en"
+    val = T.get(lang, {}).get(key) or T["en"].get(key) or T["vi"].get(key) or key
     if kwargs:
         try:
             return val.format(**kwargs)

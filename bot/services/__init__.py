@@ -49,7 +49,31 @@ async def get_or_create_user(
         # create api key
         ak = ApiKey(user_id=u.id, key=gen_api_key())
         s.add(ak)
-        return u
+        new_user_id = u.id
+        new_user_name = u.full_name or "—"
+        new_user_handle = u.username or "—"
+        new_user_ref = ref
+    # Admin notification (outside session_scope to avoid blocking commit)
+    from bot.bot_instance import bot, notify_admin
+
+    ref_note = f" (ref by `{new_user_ref}`)" if new_user_ref else ""
+    await notify_admin(
+        f"👋 *NEW USER* {new_user_name} (@{new_user_handle}) `{new_user_id}`{ref_note}"
+    )
+    # DM referrer that they got a new referral
+    if new_user_ref and bot:
+        try:
+            await bot.send_message(
+                new_user_ref,
+                f"🎉 *New referral!*\n\n"
+                f"{new_user_name} (@{new_user_handle}) just joined via your link.\n"
+                f"You'll earn 1% on every deposit they make (max $1 per deposit).",
+                parse_mode="Markdown",
+            )
+        except Exception:
+            pass
+    async with session_scope() as s:
+        return await s.get(User, new_user_id)
 
 
 async def set_language(tg_id: int, lang: str) -> None:

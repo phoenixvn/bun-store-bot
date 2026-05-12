@@ -23,12 +23,22 @@ async def _render(cb: CallbackQuery, p: ProductView, qty: int, lang: str, balanc
     unit = Decimal(p.price)
     total = (unit * qty * (Decimal("100") - discount) / Decimal("100")).quantize(Decimal("0.0001"))
 
-    lines = [
-        f"{p.emoji} *{t(lang,'product')}:* {p.name}",
-        f"{t(lang,'orig_price')}: {fmt_usdt(p.price)} USDT",
-        f"{t(lang,'stock_now')}: {stock_str}",
-        f"{t(lang,'warranty')}: {p.warranty}",
-    ]
+    lines = [f"{p.emoji} *{t(lang,'product')}:* {p.name}"]
+    if p.original_price is not None:
+        from datetime import datetime, timezone
+        remain = ""
+        if p.promo_until:
+            delta = p.promo_until - datetime.now(timezone.utc)
+            secs = max(0, int(delta.total_seconds()))
+            if secs >= 3600:
+                remain = f" — còn {secs//3600}h {(secs%3600)//60}m"
+            else:
+                remain = f" — còn {secs//60}m"
+        lines.append(f"🔥 *PROMO*: ~{fmt_usdt(p.original_price)}~ → *{fmt_usdt(p.price)}* USDT{remain}")
+    else:
+        lines.append(f"{t(lang,'orig_price')}: {fmt_usdt(p.price)} USDT")
+    lines.append(f"{t(lang,'stock_now')}: {stock_str}")
+    lines.append(f"{t(lang,'warranty')}: {p.warranty}")
     if p.discount_tiers:
         lines.append("")
         for tier in p.discount_tiers:
@@ -110,6 +120,16 @@ async def buy(cb: CallbackQuery, state: FSMContext) -> None:
     )
     await cb.message.answer(text, parse_mode="Markdown")
     await notify_balance_change(user.id, -result.total, f"order:{result.order_id}")
+    # Admin notification (esp. for unlimited products that need manual fulfillment)
+    p_obj = await get_product(pid)
+    if p_obj and p_obj.unlimited:
+        from bot.bot_instance import notify_admin
+        await notify_admin(
+            f"🛒 *NEW ORDER #{result.order_id}* — needs manual fulfillment\n"
+            f"User: {user.full_name or '—'} (@{user.username or '—'}) `{user.id}`\n"
+            f"Product: {result.product_name}\n"
+            f"Qty: {result.quantity} | Total: {fmt_usdt(result.total)} USDT"
+        )
     # re-render with zero qty
     p = await get_product(pid)
     fresh = await get_or_create_user(cb.from_user.id, cb.from_user.username, cb.from_user.full_name)

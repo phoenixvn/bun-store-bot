@@ -2,24 +2,28 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 
 import uvicorn
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
-from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
 
 from bot.api_app import app as api_app
 from bot.bot_instance import set_bot
 from bot.config import settings
 from bot.handlers import admin, api, deposit, language, product, profile, shop, start, support
-from bot.payments import bep20, ton, tron
+from bot.payments import bep20, binance_pay, binance_spot, ton, tron
+from bot import runtime_settings
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("bot")
 
 
 async def main() -> None:
+    # Load runtime overrides from DB before instantiating anything that reads settings
+    await runtime_settings.load()
+
     bot = Bot(
         token=settings.bot_token,
         default=DefaultBotProperties(parse_mode=None),
@@ -43,10 +47,13 @@ async def main() -> None:
     asyncio.create_task(bep20.poll_loop())
     asyncio.create_task(ton.poll_loop())
     asyncio.create_task(tron.poll_loop())
+    asyncio.create_task(binance_spot.poll_loop())
+    asyncio.create_task(binance_pay.poll_loop())
 
-    # FastAPI sidecar
+    # FastAPI sidecar — Railway injects $PORT; fall back to API_PORT for local dev
+    port = int(os.environ.get("PORT") or settings.api_port)
     config = uvicorn.Config(
-        api_app, host=settings.api_host, port=settings.api_port, log_level="warning"
+        api_app, host=settings.api_host, port=port, log_level="warning"
     )
     server = uvicorn.Server(config)
     asyncio.create_task(server.serve())

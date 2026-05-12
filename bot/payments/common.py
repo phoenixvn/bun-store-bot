@@ -46,7 +46,7 @@ async def record_and_credit(
     ref_id, ref_amount = await award_referral(dep_id)
     await notify_balance_change(user_id, amount, f"deposit:{method}")
 
-    from bot.bot_instance import bot
+    from bot.bot_instance import bot, notify_admin
 
     if bot:
         try:
@@ -61,4 +61,8 @@ async def record_and_credit(
                 await bot.send_message(ref_id, f"💰 +{ref_amount} USDT (referral)")
             except Exception:
                 pass
+    await notify_admin(
+        f"💸 *DEPOSIT* +{amount} USDT via `{method}`\n"
+        f"User: `{user_id}` | New balance: {new_balance} USDT"
+    )
     return True, new_balance

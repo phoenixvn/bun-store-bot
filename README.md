@@ -1,6 +1,6 @@
-# Bun-style Telegram Store Bot
+# Bami Store Telegram Bot
 
-Clone feature-complete của Bun AI Store style bot: crypto wallet balance, shop với bulk discount, auto-delivery keys, referral 1%, live support via forum topics, Developer API + webhook, 7 ngôn ngữ.
+Telegram store bot cho Bánh Mì Store: crypto wallet balance, shop với bulk discount, auto-delivery keys, referral 1%, live support via forum topics, Developer API + webhook, 7 ngôn ngữ.
 
 ## Quick start
 

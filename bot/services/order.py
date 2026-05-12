@@ -8,7 +8,7 @@ from sqlalchemy import func, select, update
 
 from bot.database import session_scope
 from bot.models import Order, Product, StockItem, User
-from bot.utils import best_discount
+from bot.utils import best_discount, effective_price, is_promo_active
 
 
 @dataclass
@@ -23,6 +23,8 @@ class ProductView:
     unlimited: bool
     in_stock: int
     discount_tiers: list[dict]
+    original_price: Decimal | None = None  # set if promo active
+    promo_until: object = None
 
 
 async def _count_stock(session, product_id: int) -> int:
@@ -35,34 +37,38 @@ async def _count_stock(session, product_id: int) -> int:
     ) or 0
 
 
-async def list_products(page: int, per_page: int = 10) -> tuple[list[ProductView], int]:
+async def list_products(
+    page: int, per_page: int = 10, emoji_filter: str | None = None
+) -> tuple[list[ProductView], int]:
     async with session_scope() as s:
-        total = (
-            await s.scalar(select(func.count(Product.id)).where(Product.is_active.is_(True)))
-        ) or 0
+        base = select(Product).where(Product.is_active.is_(True))
+        cnt_base = select(func.count(Product.id)).where(Product.is_active.is_(True))
+        if emoji_filter:
+            base = base.where(Product.emoji == emoji_filter)
+            cnt_base = cnt_base.where(Product.emoji == emoji_filter)
+        total = (await s.scalar(cnt_base)) or 0
         res = await s.execute(
-            select(Product)
-            .where(Product.is_active.is_(True))
-            .order_by(Product.id)
-            .limit(per_page)
-            .offset(page * per_page)
+            base.order_by(Product.id).limit(per_page).offset(page * per_page)
         )
         rows = res.scalars().all()
         views = []
         for p in rows:
             stock = await _count_stock(s, p.id)
+            promo = is_promo_active(p)
             views.append(
                 ProductView(
                     id=p.id,
                     name=p.name,
                     emoji=p.emoji,
-                    price=p.price,
+                    price=effective_price(p),
                     warranty=p.warranty,
                     description=p.description,
                     note=p.note,
                     unlimited=p.unlimited,
                     in_stock=stock,
                     discount_tiers=p.discount_tiers or [],
+                    original_price=Decimal(p.price) if promo else None,
+                    promo_until=p.promo_until if promo else None,
                 )
             )
         import math
@@ -77,17 +83,20 @@ async def get_product(product_id: int) -> Optional[ProductView]:
         if not p:
             return None
         stock = await _count_stock(s, p.id)
+        promo = is_promo_active(p)
         return ProductView(
             id=p.id,
             name=p.name,
             emoji=p.emoji,
-            price=p.price,
+            price=effective_price(p),
             warranty=p.warranty,
             description=p.description,
             note=p.note,
             unlimited=p.unlimited,
             in_stock=stock,
             discount_tiers=p.discount_tiers or [],
+            original_price=Decimal(p.price) if promo else None,
+            promo_until=p.promo_until if promo else None,
         )
 
 
@@ -116,7 +125,7 @@ async def buy_product(
             raise BuyError("no_stock")
 
         discount = best_discount(quantity, p.discount_tiers or [])
-        unit = Decimal(p.price)
+        unit = effective_price(p)
         total = (unit * quantity * (Decimal("100") - discount) / Decimal("100")).quantize(
             Decimal("0.0001")
         )
@@ -131,7 +140,7 @@ async def buy_product(
         if p.unlimited:
             # a single synthetic payload — admin must set p.description or note as template
             for _ in range(quantity):
-                payloads.append(p.description or f"{p.name} — liên hệ admin để nhận")
+                payloads.append(p.description or f"{p.name} — contact admin to receive")
             stock_items: list[StockItem] = []
         else:
             stmt = (

@@ -46,7 +46,7 @@ class User(Base):
     username: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     full_name: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     balance: Mapped[Decimal] = mapped_column(Numeric(18, 4), default=Decimal("0"))
-    language: Mapped[str] = mapped_column(String(8), default="vi")
+    language: Mapped[str] = mapped_column(String(8), default="en")
     notifications: Mapped[bool] = mapped_column(Boolean, default=True)
     referrer_id: Mapped[Optional[int]] = mapped_column(
         BigInteger, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
@@ -68,8 +68,11 @@ class Product(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String(128))
     emoji: Mapped[str] = mapped_column(String(16), default="")
+    cost_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(18, 4), nullable=True)
     price: Mapped[Decimal] = mapped_column(Numeric(18, 4))
-    warranty: Mapped[str] = mapped_column(String(128), default="Không có bảo hành")
+    promo_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(18, 4), nullable=True)
+    promo_until: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    warranty: Mapped[str] = mapped_column(String(128), default="No warranty")
     description: Mapped[str] = mapped_column(Text, default="")
     note: Mapped[str] = mapped_column(Text, default="")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -173,3 +176,20 @@ class Setting(Base):
 
     key: Mapped[str] = mapped_column(String(64), primary_key=True)
     value: Mapped[str] = mapped_column(Text)
+
+
+class Broadcast(Base):
+    __tablename__ = "broadcasts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    audience: Mapped[str] = mapped_column(String(32))  # all|depositors|buyers|has_balance|by_lang|ids|none
+    audience_param: Mapped[str] = mapped_column(Text, default="")  # lang code or comma-separated ids
+    text: Mapped[str] = mapped_column(Text)
+    parse_mode: Mapped[str] = mapped_column(String(16), default="Markdown")
+    to_users: Mapped[bool] = mapped_column(Boolean, default=True)
+    to_channel: Mapped[bool] = mapped_column(Boolean, default=False)
+    recipients: Mapped[int] = mapped_column(Integer, default=0)
+    sent: Mapped[int] = mapped_column(Integer, default=0)
+    failed: Mapped[int] = mapped_column(Integer, default=0)
+    channel_ok: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

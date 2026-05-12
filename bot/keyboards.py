@@ -36,16 +36,43 @@ def back_btn(lang: str, cb: str = "menu") -> InlineKeyboardButton:
 
 
 def deposit_menu(lang: str) -> InlineKeyboardMarkup:
-    rows = [
-        [InlineKeyboardButton(text=t(lang, "binance_pay"), callback_data="dep:binance")],
-        [InlineKeyboardButton(text=t(lang, "usdt_bep20"), callback_data="dep:bep20")],
-        [
-            InlineKeyboardButton(text=t(lang, "ton"), callback_data="dep:ton"),
-            InlineKeyboardButton(text=t(lang, "tron"), callback_data="dep:tron"),
-        ],
-        [InlineKeyboardButton(text=t(lang, "other"), callback_data="dep:other")],
-        [back_btn(lang)],
-    ]
+    rows: list[list[InlineKeyboardButton]] = []
+    if settings.binance_pay_id and settings.binance_api_key:
+        rows.append(
+            [InlineKeyboardButton(text=t(lang, "binance_pay"), callback_data="dep:binance")]
+        )
+    if settings.binance_api_key and settings.binance_api_secret:
+        if settings.binance_bep20_address:
+            rows.append(
+                [
+                    InlineKeyboardButton(
+                        text=t(lang, "binance_spot_bep20"),
+                        callback_data="dep:bnb_spot_bep20",
+                    )
+                ]
+            )
+        if settings.binance_trc20_address:
+            rows.append(
+                [
+                    InlineKeyboardButton(
+                        text=t(lang, "binance_spot_trc20"),
+                        callback_data="dep:bnb_spot_trc20",
+                    )
+                ]
+            )
+    if settings.bep20_deposit_address:
+        rows.append(
+            [InlineKeyboardButton(text=t(lang, "usdt_bep20"), callback_data="dep:bep20")]
+        )
+    if settings.ton_deposit_address or settings.tron_deposit_address:
+        ton_tron: list[InlineKeyboardButton] = []
+        if settings.ton_deposit_address:
+            ton_tron.append(InlineKeyboardButton(text=t(lang, "ton"), callback_data="dep:ton"))
+        if settings.tron_deposit_address:
+            ton_tron.append(InlineKeyboardButton(text=t(lang, "tron"), callback_data="dep:tron"))
+        rows.append(ton_tron)
+    rows.append([InlineKeyboardButton(text=t(lang, "other"), callback_data="dep:other")])
+    rows.append([back_btn(lang)])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -67,32 +94,54 @@ def language_kb(lang: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def shop_kb(lang: str, products: list, page: int, total_pages: int) -> InlineKeyboardMarkup:
+CATEGORIES = [
+    ("💎", "BEST"),
+    ("🐧", "IT"),
+    ("✨", "AI"),
+    ("🎨", "Design"),
+    ("🎧", "Media"),
+    ("📚", "Learn"),
+    ("📦", "Drive"),
+    ("🎯", "Work"),
+    ("🛡", "Sec"),
+    ("🔧", "Other"),
+]
+
+
+def shop_kb(lang: str, products: list, page: int, total_pages: int, flt: str = "all") -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
     for p in products:
-        if p.unlimited:
-            stock_str = "∞"
+        stock_str = "∞" if p.unlimited else str(p.in_stock)
+        if p.original_price is not None:
+            label = f"🔥 {p.emoji} {p.name} - {fmt_usdt(p.price)} USDT ̶({fmt_usdt(p.original_price)}̶)"
         else:
-            stock_str = str(p.in_stock)
-        label = f"{p.emoji} {p.name} - {fmt_usdt(p.price)} USDT (Kho: {stock_str})"
+            label = f"{p.emoji} {p.name} - {fmt_usdt(p.price)} USDT (Stock: {stock_str})"
         rows.append([InlineKeyboardButton(text=label, callback_data=f"prod:{p.id}")])
-    rows.append(
-        [
-            InlineKeyboardButton(text=t(lang, "refresh"), callback_data=f"shop:{page}:all"),
-            InlineKeyboardButton(text=t(lang, "filter_all"), callback_data=f"shop:{page}:all"),
-        ]
-    )
-    nav: list[InlineKeyboardButton] = []
-    nav.append(
+    # Category filter row(s)
+    cat_chunk: list[InlineKeyboardButton] = [
+        InlineKeyboardButton(
+            text=("✅" if flt == "all" else "") + t(lang, "filter_all"),
+            callback_data="shop:0:all",
+        )
+    ]
+    for emoji, label in CATEGORIES:
+        marker = "✅" if flt == emoji else ""
+        cat_chunk.append(
+            InlineKeyboardButton(text=f"{marker}{emoji}{label}", callback_data=f"shop:0:{emoji}")
+        )
+    # split into rows of 5 buttons
+    for i in range(0, len(cat_chunk), 5):
+        rows.append(cat_chunk[i : i + 5])
+    nav: list[InlineKeyboardButton] = [
         InlineKeyboardButton(
             text=t(lang, "page", cur=page + 1, total=max(1, total_pages)),
             callback_data="noop",
         )
-    )
+    ]
     if page + 1 < total_pages:
-        nav.append(InlineKeyboardButton(text=t(lang, "next"), callback_data=f"shop:{page+1}:all"))
+        nav.append(InlineKeyboardButton(text=t(lang, "next"), callback_data=f"shop:{page+1}:{flt}"))
     if page > 0:
-        nav.insert(0, InlineKeyboardButton(text=t(lang, "prev"), callback_data=f"shop:{page-1}:all"))
+        nav.insert(0, InlineKeyboardButton(text=t(lang, "prev"), callback_data=f"shop:{page-1}:{flt}"))
     rows.append(nav)
     rows.append([back_btn(lang)])
     return InlineKeyboardMarkup(inline_keyboard=rows)
@@ -136,9 +185,12 @@ def profile_kb(lang: str, notif: bool) -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text=notif_label, callback_data="profile:notif")],
             [
                 InlineKeyboardButton(text=t(lang, "my_orders"), callback_data="orders:0"),
-                InlineKeyboardButton(text=t(lang, "dev_api"), callback_data="api"),
+                InlineKeyboardButton(text=t(lang, "my_deposits"), callback_data="deposits:0"),
             ],
-            [InlineKeyboardButton(text=t(lang, "language"), callback_data="lang:menu")],
+            [
+                InlineKeyboardButton(text=t(lang, "dev_api"), callback_data="api"),
+                InlineKeyboardButton(text=t(lang, "language"), callback_data="lang:menu"),
+            ],
             [back_btn(lang)],
         ]
     )
