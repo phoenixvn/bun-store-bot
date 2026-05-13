@@ -7,13 +7,19 @@ from aiogram import F, Router
 from aiogram.filters import StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import (
+    CallbackQuery,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Message,
+)
 
 from bot.config import settings
 from bot.database import session_scope
 from bot.i18n import t
 from bot.keyboards import cancel_kb, deposit_menu
 from bot.models import Deposit, DepositStatus
+from bot.payments import cryptomus
 from bot.payments.common import record_and_credit
 from bot.services import get_or_create_user
 from bot.utils import fmt_usdt, parse_decimal
@@ -28,6 +34,7 @@ class DepositFSM(StatesGroup):
     tron_amount = State()
     binance_spot_bep20_amount = State()
     binance_spot_trc20_amount = State()
+    cryptomus_amount = State()
 
 
 @router.callback_query(F.data == "dep:menu")
@@ -52,6 +59,49 @@ async def binance(cb: CallbackQuery, state: FSMContext) -> None:
     await cb.answer()
 
 
+@router.callback_query(F.data == "dep:cryptomus")
+async def cryptomus_pick(cb: CallbackQuery, state: FSMContext) -> None:
+    user = await get_or_create_user(cb.from_user.id, cb.from_user.username, cb.from_user.full_name)
+    if not cryptomus.enabled():
+        await cb.answer(t(user.language, "cryptomus_error"), show_alert=True)
+        return
+    await state.set_state(DepositFSM.cryptomus_amount)
+    await cb.message.edit_text(
+        t(user.language, "cryptomus_prompt"),
+        reply_markup=cancel_kb(user.language, "dep:menu"),
+        parse_mode="Markdown",
+    )
+    await cb.answer()
+
+
+@router.message(StateFilter(DepositFSM.cryptomus_amount))
+async def cryptomus_amount_entered(msg: Message, state: FSMContext) -> None:
+    user = await get_or_create_user(msg.from_user.id, msg.from_user.username, msg.from_user.full_name)
+    lang = user.language
+    amount = parse_decimal(msg.text or "")
+    if not amount or amount < Decimal("1"):
+        await msg.answer(t(lang, "cryptomus_min"))
+        return
+    amount = amount.quantize(Decimal("0.01"))
+    await state.clear()
+    wait = await msg.answer(t(lang, "cryptomus_creating"))
+    res = await cryptomus.create_invoice(user.id, amount)
+    if not res or not res.get("url"):
+        await wait.edit_text(t(lang, "cryptomus_error"))
+        return
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=t(lang, "cryptomus_pay_btn", amount=amount), url=res["url"])],
+            [InlineKeyboardButton(text=t(lang, "back"), callback_data="dep:menu")],
+        ]
+    )
+    await wait.edit_text(
+        t(lang, "cryptomus_created", amount=amount),
+        reply_markup=kb,
+        parse_mode="Markdown",
+    )
+
+
 async def _prompt_amount(cb: CallbackQuery, state: FSMContext, method: str, key_tpl: str, addr: str):
     user = await get_or_create_user(cb.from_user.id, cb.from_user.username, cb.from_user.full_name)
     mapping = {
@@ -62,10 +112,7 @@ async def _prompt_amount(cb: CallbackQuery, state: FSMContext, method: str, key_
         "binance_spot_trc20": DepositFSM.binance_spot_trc20_amount,
     }
     await state.set_state(mapping[method])
-    text = (
-        t(user.language, key_tpl, address=addr)
-        + "\n\n_Nhập số tiền bạn sẽ gửi (VD: 5.25):_"
-    )
+    text = t(user.language, key_tpl, address=addr) + "\n\n" + t(user.language, "enter_amount_hint")
     await cb.message.edit_text(text, reply_markup=cancel_kb(user.language, "dep:menu"), parse_mode="Markdown")
     await cb.answer()
 
@@ -127,6 +174,7 @@ async def _register_pending(user_id: int, method: str, amount: Decimal) -> int:
 )
 async def amount_entered(msg: Message, state: FSMContext) -> None:
     user = await get_or_create_user(msg.from_user.id, msg.from_user.username, msg.from_user.full_name)
+    lang = user.language
     cur = await state.get_state()
     method = {
         DepositFSM.binance_pay_amount.state: "binance_pay",
@@ -138,7 +186,7 @@ async def amount_entered(msg: Message, state: FSMContext) -> None:
     }[cur]
     amount = parse_decimal(msg.text or "")
     if not amount:
-        await msg.answer("❌ Số tiền không hợp lệ.")
+        await msg.answer(t(lang, "invalid_amount"))
         return
     # Add random 4th-decimal suffix (0.0001..0.0099) so two users entering
     # the same headline amount don't collide on the poller match-by-amount.
@@ -147,9 +195,7 @@ async def amount_entered(msg: Message, state: FSMContext) -> None:
     await _register_pending(user.id, method, amount)
     await state.clear()
     await msg.answer(
-        f"⏳ Phiên nạp đã đăng ký.\n\n"
-        f"Vui lòng gửi *chính xác* số tiền:\n`{amount}` USDT\n\n"
-        f"⚠️ _Đúng cả 4 chữ số thập phân_ — sai 1 số bot sẽ không tự ghi nhận. Bot polling mỗi 30 giây.",
+        t(lang, "pending_registered", amount=amount, interval=settings.deposit_poll_interval),
         parse_mode="Markdown",
     )
 

@@ -37,6 +37,10 @@ def back_btn(lang: str, cb: str = "menu") -> InlineKeyboardButton:
 
 def deposit_menu(lang: str) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
+    if settings.cryptomus_api_key and settings.cryptomus_merchant_id:
+        rows.append(
+            [InlineKeyboardButton(text=t(lang, "cryptomus"), callback_data="dep:cryptomus")]
+        )
     if settings.binance_pay_id and settings.binance_api_key:
         rows.append(
             [InlineKeyboardButton(text=t(lang, "binance_pay"), callback_data="dep:binance")]

@@ -154,6 +154,28 @@ T: dict[str, dict[str, str]] = {
         "ref_bonus": "💰 Bạn nhận hoa hồng giới thiệu: +{amount} USDT",
         "support_topic_msg": "✈️ Hỗ trợ Trực tiếp\nUser: {full} (`{id}`) @{username}\nNgôn ngữ: {lang_code}",
         "admin_only": "❌ Bạn không có quyền.",
+        "cryptomus": "💠 Cryptomus (crypto)",
+        "cryptomus_prompt": (
+            "💠 *Cryptomus*\n\n"
+            "Thanh toán bằng bất kỳ crypto nào (USDT, BTC, ETH, …) — tự động cộng tiền.\n\n"
+            "_Nhập số tiền theo USDT (VD: 5):_"
+        ),
+        "cryptomus_creating": "⏳ Đang tạo hóa đơn…",
+        "cryptomus_created": (
+            "💠 *Hóa đơn Cryptomus*\n\n"
+            "Số tiền: `{amount}` USDT\n\n"
+            "Bấm nút bên dưới để thanh toán. Số dư sẽ được cộng tự động sau khi giao dịch xác nhận (thường 1–3 phút)."
+        ),
+        "cryptomus_pay_btn": "💳 Thanh toán {amount} USDT",
+        "cryptomus_error": "❌ Không tạo được hóa đơn. Thử lại sau hoặc dùng phương thức khác.",
+        "cryptomus_min": "❌ Số tiền tối thiểu là 1 USDT.",
+        "enter_amount_hint": "_Nhập số tiền bạn sẽ gửi (VD: 5.25):_",
+        "invalid_amount": "❌ Số tiền không hợp lệ.",
+        "pending_registered": (
+            "⏳ Phiên nạp đã đăng ký.\n\n"
+            "Vui lòng gửi *chính xác* số tiền:\n`{amount}` USDT\n\n"
+            "⚠️ _Đúng cả 4 chữ số thập phân_ — sai 1 số bot sẽ không tự ghi nhận. Bot polling mỗi {interval} giây."
+        ),
     }
 }
 
@@ -270,6 +292,28 @@ T["en"] = {
     "ref_bonus": "💰 Referral commission: +{amount} USDT",
     "support_topic_msg": "✈️ Live Support\nUser: {full} (`{id}`) @{username}\nLang: {lang_code}",
     "admin_only": "❌ Not allowed.",
+    "cryptomus": "💠 Cryptomus (crypto)",
+    "cryptomus_prompt": (
+        "💠 *Cryptomus*\n\n"
+        "Pay with any crypto (USDT, BTC, ETH, …) — credited automatically.\n\n"
+        "_Enter the amount in USDT (e.g. 5):_"
+    ),
+    "cryptomus_creating": "⏳ Creating invoice…",
+    "cryptomus_created": (
+        "💠 *Cryptomus invoice*\n\n"
+        "Amount: `{amount}` USDT\n\n"
+        "Tap the button below to pay. Your balance is credited automatically once the payment is confirmed (usually 1–3 min)."
+    ),
+    "cryptomus_pay_btn": "💳 Pay {amount} USDT",
+    "cryptomus_error": "❌ Couldn't create the invoice. Try again later or use another method.",
+    "cryptomus_min": "❌ Minimum amount is 1 USDT.",
+    "enter_amount_hint": "_Enter the amount you'll send (e.g. 5.25):_",
+    "invalid_amount": "❌ Invalid amount.",
+    "pending_registered": (
+        "⏳ Deposit session registered.\n\n"
+        "Send *exactly*:\n`{amount}` USDT\n\n"
+        "⚠️ _All 4 decimals must match_ — otherwise the bot won't auto-credit. It polls every {interval}s."
+    ),
 }
 
 # Stub other locales to inherit english (fallback chain handled in t())

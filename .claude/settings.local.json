@@ -31,7 +31,10 @@
       "Bash(curl -s \"https://api.telegram.org/bot8659826312:AAHdAfm1DnGuegJCB15Ta3QuHQlisPJMM-s/getChatMember?chat_id=-1003901059674&user_id=8659826312\")",
       "Bash(curl -s -X POST \"https://api.telegram.org/bot8659826312:AAHdAfm1DnGuegJCB15Ta3QuHQlisPJMM-s/createForumTopic\" -H \"Content-Type: application/json\" -d '{\"chat_id\":-1003901059674,\"name\":\"setup test — please delete\"}')",
       "Bash(curl *)",
-      "Bash(git commit -q -m 'i18n: default language English; translate remaining VN user-facing strings *)"
+      "Bash(git commit -q -m 'i18n: default language English; translate remaining VN user-facing strings *)",
+      "Bash(BOT_TOKEN=x DATABASE_URL=sqlite+aiosqlite:///tmp.db CRYPTOMUS_API_KEY=k CRYPTOMUS_MERCHANT_ID=m python -c \"import bot.payments.cryptomus as cm, bot.api_app, bot.handlers.deposit, bot.keyboards, bot.main; print\\('import ok'\\); print\\('enabled', cm.enabled\\(\\)\\); print\\('order', cm.new_order_id\\(\\)\\)\")",
+      "Bash(BOT_TOKEN=x DATABASE_URL=postgresql://u:p@localhost/db CRYPTOMUS_API_KEY=k CRYPTOMUS_MERCHANT_ID=m python -c \"import bot.payments.cryptomus as cm, bot.api_app, bot.handlers.deposit, bot.keyboards, bot.main; print\\('import ok'\\); print\\('enabled', cm.enabled\\(\\)\\); print\\('sign of {}:', cm.verify_sign\\({'order_id':'x','status':'paid','sign':'nope'}\\)\\)\")",
+      "Bash(git commit -q -m 'feat\\(deposit\\): Cryptomus payment gateway \\(hosted invoice + webhook + poller fallback\\) *)"
     ]
   }
 }

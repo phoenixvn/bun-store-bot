@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+import json as _json
+
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy import select
 
@@ -80,6 +82,25 @@ async def buy(body: BuyBody, user_id: int = Depends(auth)):
 @app.get("/")
 async def root():
     return {"name": "Bami Store API", "endpoints": ["/v1/balance", "/v1/orders", "/v1/buy"]}
+
+
+@app.post("/cryptomus/webhook")
+async def cryptomus_webhook(request: Request):
+    from bot.payments import cryptomus
+
+    raw = await request.body()
+    try:
+        data = _json.loads(raw)
+    except Exception:
+        raise HTTPException(400, "bad json")
+    if not isinstance(data, dict) or not cryptomus.verify_sign(data):
+        raise HTTPException(403, "bad sign")
+    try:
+        await cryptomus.handle_webhook(data)
+    except Exception:
+        # acknowledge anyway — the poller will retry; Cryptomus retries on non-200
+        pass
+    return {"status": "ok"}
 
 
 @app.get("/healthz")

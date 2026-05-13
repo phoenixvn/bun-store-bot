@@ -69,6 +69,11 @@ class Settings(BaseSettings):
     # Channel for new-product auto-post (bot must be admin)
     channel_id: int = Field(default=0, alias="CHANNEL_ID")
 
+    # Cryptomus payment gateway (https://cryptomus.com)
+    cryptomus_api_key: str = Field(default="", alias="CRYPTOMUS_API_KEY")
+    cryptomus_merchant_id: str = Field(default="", alias="CRYPTOMUS_MERCHANT_ID")
+    public_base_url: str = Field(default="", alias="PUBLIC_BASE_URL")
+
     deposit_poll_interval: int = Field(default=30, alias="DEPOSIT_POLL_INTERVAL")
 
     @property

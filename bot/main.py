@@ -13,7 +13,7 @@ from bot.api_app import app as api_app
 from bot.bot_instance import set_bot
 from bot.config import settings
 from bot.handlers import admin, api, deposit, language, product, profile, shop, start, support
-from bot.payments import bep20, binance_pay, binance_spot, ton, tron
+from bot.payments import bep20, binance_pay, binance_spot, cryptomus, ton, tron
 from bot import runtime_settings
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -49,6 +49,7 @@ async def main() -> None:
     asyncio.create_task(tron.poll_loop())
     asyncio.create_task(binance_spot.poll_loop())
     asyncio.create_task(binance_pay.poll_loop())
+    asyncio.create_task(cryptomus.poll_loop())
 
     # FastAPI sidecar — Railway injects $PORT; fall back to API_PORT for local dev
     port = int(os.environ.get("PORT") or settings.api_port)
