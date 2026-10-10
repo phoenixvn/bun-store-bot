@@ -185,6 +185,7 @@ form[style*="display:inline"] {{ display:inline-block!important; }}
   <a class="{a_usr}" href="/admin/users">Users</a>
   <a class="{a_aff}" href="/admin/affiliate">Affiliate</a>
   <a class="{a_bc}" href="/admin/broadcast">Broadcast</a>
+  <a class="{a_sup}" href="/admin/supplier">Supplier</a>
   <a class="{a_set}" href="/admin/settings">Settings</a>
 </nav>
 <div class="container-fluid"><h1>{title}</h1>{body}</div>
@@ -195,6 +196,7 @@ def page(title: str, body: str, active: str = "") -> HTMLResponse:
     return HTMLResponse(SHELL.format(
         title=escape(title), body=body,
         a_dash="active" if active == "dash" else "",
+        a_sup="active" if active == "sup" else "",
         a_prod="active" if active == "prod" else "",
         a_ord="active" if active == "ord" else "",
         a_dep="active" if active == "dep" else "",
@@ -330,9 +332,18 @@ async def products_list(_: str = Depends(require_auth)):
     for p in rows:
         stock = "∞" if p.unlimited else stock_counts[p.id]
         cost = p.cost_price if p.cost_price is not None else "—"
+        src = ""
+        if p.supplier_product_id is not None:
+            stock = p.supplier_stock
+            src = (
+                f" <span class='badge bg-info text-dark'>FatCat #{p.supplier_product_id}"
+                f" · {p.supplier_price_vnd or 0:,}đ{' · auto' if p.supplier_auto_price else ''}</span>"
+            )
+            if not p.supplier_available:
+                src += " <span class='badge bg-secondary'>delisted</span>"
         table += (
             f"<tr><td>{p.id}</td>"
-            f"<td>{escape(p.emoji or '')} {escape(p.name)}</td>"
+            f"<td>{escape(p.emoji or '')} {escape(p.name)}{src}</td>"
             f"<td>{cost}</td>"
             f"<td><b>{p.price}</b></td>"
             f"<td>{stock}</td>"
@@ -378,6 +389,16 @@ async def product_edit_form(pid: int, _: str = Depends(require_auth)):
             f"<button class='btn btn-warning'>Activate promo & post to channel</button></div>"
             f"</div></form>"
         )
+        supplier_block = ""
+        if p.supplier_product_id is not None:
+            supplier_block = (
+                f"<div class='alert alert-info mb-2'>Linked to FatCat product #{p.supplier_product_id} — "
+                f"cost {p.supplier_price_vnd or 0:,} VND, stock {p.supplier_stock}, max {p.supplier_max_qty}/order. "
+                f"Cost is refreshed every sync.</div>"
+                f"<div class='form-check mb-2'><input class='form-check-input' type=checkbox name=supplier_auto_price id=sap "
+                f"{'checked' if p.supplier_auto_price else ''}><label class='form-check-label' for=sap>"
+                f"Auto sell price = cost × (1 + SUPPLIER_MARKUP_PERCENT). Untick to keep the Sell USDT above.</label></div>"
+            )
         body = f"""{promo_block}{promo_form}
         <form method=post action='/admin/products/{pid}/edit' class='card p-3'>
         <div class='mb-2'><label>Name</label><input class='form-control' name=name value='{escape(p.name)}' required></div>
@@ -391,6 +412,7 @@ async def product_edit_form(pid: int, _: str = Depends(require_auth)):
         <div class='mb-2'><label>Discount tiers JSON</label><input class='form-control font-monospace' name=discount_tiers value='{escape(json.dumps(p.discount_tiers or []))}'></div>
         <div class='form-check mb-2'><input class='form-check-input' type=checkbox name=unlimited id=ulim {"checked" if p.unlimited else ""}><label class='form-check-label' for=ulim>Unlimited stock</label></div>
         <div class='form-check mb-2'><input class='form-check-input' type=checkbox name=is_active id=iact {"checked" if p.is_active else ""}><label class='form-check-label' for=iact>Active</label></div>
+        {supplier_block}
         <button class='btn btn-success'>Save changes</button>
         <a href='/admin/products' class='btn btn-link'>Back</a>
         </form>"""
@@ -410,6 +432,7 @@ async def product_edit_save(
     discount_tiers: str = Form("[]"),
     unlimited: Optional[str] = Form(None),
     is_active: Optional[str] = Form(None),
+    supplier_auto_price: Optional[str] = Form(None),
 ):
     tiers: list = []
     try:
@@ -433,7 +456,11 @@ async def product_edit_save(
         p.warranty = warranty
         p.description = description
         p.discount_tiers = tiers
-        p.unlimited = unlimited == "on"
+        if p.supplier_product_id is not None:
+            p.supplier_auto_price = supplier_auto_price == "on"
+            p.unlimited = False  # supplier products always have real (synced) stock
+        else:
+            p.unlimited = unlimited == "on"
         p.is_active = is_active == "on"
         notif_emoji = p.emoji or ""
         notif_name = p.name
@@ -923,13 +950,18 @@ async def db_dump(_: str = Depends(require_auth)):
 
 @router.post("/markup")
 async def markup_prices(factor: float, _: str = Depends(require_auth)):
-    """Idempotent: price = cost_price * factor. Re-runs are safe."""
+    """Idempotent: price = cost_price * factor. Re-runs are safe.
+    Skips auto-priced FatCat products — their price follows SUPPLIER_MARKUP_PERCENT."""
     if factor <= 0 or factor > 10:
         raise HTTPException(400, "invalid factor (0 < factor <= 10)")
     f = Decimal(str(factor))
     samples = []
     async with session_scope() as s:
-        rows = (await s.execute(select(Product))).scalars().all()
+        rows = (await s.execute(
+            select(Product).where(
+                or_(Product.supplier_product_id.is_(None), Product.supplier_auto_price.is_(False))
+            )
+        )).scalars().all()
         for p in rows:
             cost = Decimal(p.cost_price) if p.cost_price is not None else Decimal(p.price)
             if p.cost_price is None:
@@ -1140,3 +1172,80 @@ async def broadcast_detail(bc_id: int, _: str = Depends(require_auth)):
     <a class='btn btn-link' href='/admin/broadcasts'>Back to history</a>
     """
     return page(f"Broadcast #{b.id}", body, "bc")
+
+
+# ---------------------------------------------------------------- FatCat supplier
+
+@router.get("/supplier", response_class=HTMLResponse)
+async def supplier_page(_: str = Depends(require_auth), msg: str = Query("")):
+    from bot.suppliers import fatcat
+
+    if not fatcat.enabled():
+        return page(
+            "Supplier",
+            "<div class='alert alert-warning'>Set <code>SUPPLIER_API_KEY</code> to enable FatCat.</div>",
+            "sup",
+        )
+    try:
+        bal = f"{await fatcat.balance_vnd():,} VND"
+    except Exception as e:
+        bal = f"<span class='text-danger'>error: {escape(str(e))}</span>"
+    async with session_scope() as s:
+        pending = (await s.execute(
+            select(Order).where(Order.status == "pending").order_by(Order.id.desc()).limit(100)
+        )).scalars().all()
+        linked = await s.scalar(
+            select(func.count(Product.id)).where(Product.supplier_product_id.is_not(None))
+        ) or 0
+    flash = f"<div class='alert alert-success'>{escape(msg)}</div>" if msg else ""
+    body = f"""{flash}
+    <div class='card p-3 mb-3'>
+      <p class='mb-1'>FatCat wallet: <b>{bal}</b> — top it up in the FatCat bot; every sale is paid from it.</p>
+      <p class='mb-1'>Linked products: <b>{linked}</b> · rate <code>{settings.vnd_per_usdt:g}</code> VND/USDT ·
+         markup <code>{settings.supplier_markup_percent:g}%</code> (edit under <a href='/admin/settings'>Settings</a>)</p>
+      <form method=post action='/admin/supplier/sync' class='mt-2'><button class='btn btn-primary btn-sm'>Sync catalog now</button></form>
+    </div>
+    <h4>Pending supplier orders ({len(pending)})</h4>
+    <p class='text-muted small'>User already paid; the bot retries automatically every 30s with the same request_id (never double-charges).</p>
+    <table class='table table-sm bg-white'><thead><tr><th>#</th><th>User</th><th>Product</th><th>Qty</th><th>Total</th><th>request_id</th><th>Attempts</th><th>Last error</th><th></th></tr></thead><tbody>
+    """
+    for o in pending:
+        body += (
+            f"<tr><td>{o.id}</td><td>{o.user_id}</td><td>{escape(o.product_name)}</td><td>{o.quantity}</td>"
+            f"<td>{o.total}</td><td><code>{escape(o.request_id or '')}</code></td><td>{o.supplier_attempts}</td>"
+            f"<td class='small'>{escape(o.supplier_error or '')}</td>"
+            f"<td><form method=post action='/admin/supplier/retry/{o.id}'>"
+            f"<button class='btn btn-sm btn-outline-primary'>Retry</button></form></td></tr>"
+        )
+    body += "</tbody></table>"
+    return page("Supplier — FatCat", body, "sup")
+
+
+@router.post("/supplier/sync")
+async def supplier_sync(_: str = Depends(require_auth)):
+    from urllib.parse import quote
+
+    from bot.services import supplier
+
+    try:
+        r = await supplier.sync_products()
+        msg = (
+            f"Synced {r.seen} products: +{len(r.created)} new, {len(r.linked)} linked, "
+            f"-{len(r.removed)} delisted, {r.repriced} repriced."
+        )
+    except Exception as e:
+        msg = f"Sync failed: {e}"
+    return RedirectResponse(f"/admin/supplier?msg={quote(msg)}", status_code=303)
+
+
+@router.post("/supplier/retry/{order_id}")
+async def supplier_retry(order_id: int, _: str = Depends(require_auth)):
+    from urllib.parse import quote
+
+    from bot.services import supplier
+
+    out = await supplier.fulfill(order_id)
+    if out.status != "pending":
+        await supplier._deliver_late(order_id, out)
+    msg = f"Order #{order_id}: {out.status}" + (f" ({out.error})" if out.error else "")
+    return RedirectResponse(f"/admin/supplier?msg={quote(msg)}", status_code=303)

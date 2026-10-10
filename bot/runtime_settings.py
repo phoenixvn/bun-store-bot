@@ -29,6 +29,10 @@ def _as_float(v: str) -> float:
     return float(v) if v.strip() else 0.0
 
 
+def _as_bool(v: str) -> bool:
+    return v.strip().lower() in ("1", "true", "yes", "on")
+
+
 # env-var key -> (attribute on settings, caster, label, group)
 EDITABLE: dict[str, tuple[str, Callable[[str], Any], str, str]] = {
     # Referral
@@ -47,6 +51,11 @@ EDITABLE: dict[str, tuple[str, Callable[[str], Any], str, str]] = {
     "ADMIN_USERNAME":           ("admin_username", str, "Admin Telegram username (no @)", "Channel"),
     "BOT_USERNAME":             ("bot_username", str, "Bot username (used in share links)", "Channel"),
     "DEFAULT_LANG":             ("default_lang", str, "Default UI language (vi/en/zh/...)", "Channel"),
+    # Supplier (FatCat)
+    "VND_PER_USDT":             ("vnd_per_usdt", _as_float, "Exchange rate: VND per 1 USDT", "Supplier"),
+    "SUPPLIER_MARKUP_PERCENT":  ("supplier_markup_percent", _as_float, "Markup over supplier cost (%)", "Supplier"),
+    "SUPPLIER_SYNC_INTERVAL":   ("supplier_sync_interval", _as_int, "Product sync interval (seconds)", "Supplier"),
+    "SUPPLIER_AUTO_ACTIVATE":   ("supplier_auto_activate", _as_bool, "New supplier products go live (true/false)", "Supplier"),
 }
 
 

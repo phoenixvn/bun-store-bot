@@ -38,6 +38,8 @@ async def _render(cb: CallbackQuery, p: ProductView, qty: int, lang: str, balanc
     else:
         lines.append(f"{t(lang,'orig_price')}: {fmt_usdt(p.price)} USDT")
     lines.append(f"{t(lang,'stock_now')}: {stock_str}")
+    if p.max_qty:
+        lines.append(t(lang, "max_per_order", n=p.max_qty))
     lines.append(f"{t(lang,'warranty')}: {p.warranty}")
     if p.discount_tiers:
         lines.append("")
@@ -81,11 +83,13 @@ async def qty(cb: CallbackQuery, state: FSMContext) -> None:
         current = current * 10 + int(digit)
         if current > 9999:
             current = 9999
-    await state.update_data(**{f"qty:{pid}": current})
     p = await get_product(pid)
     if not p:
         await cb.answer()
         return
+    if p.max_qty and current > p.max_qty:
+        current = p.max_qty
+    await state.update_data(**{f"qty:{pid}": current})
     user = await get_or_create_user(cb.from_user.id, cb.from_user.username, cb.from_user.full_name)
     await _render(cb, p, current, user.language, user.balance)
     await cb.answer()
@@ -101,24 +105,45 @@ async def buy(cb: CallbackQuery, state: FSMContext) -> None:
     if current <= 0:
         await cb.answer("⚠️ Quantity = 0", show_alert=True)
         return
+    p_view = await get_product(pid)
+    # supplier orders can take a few seconds — ack the button now so Telegram doesn't time out
+    acked = bool(p_view and p_view.max_qty)
+    if acked:
+        await cb.answer("⏳")
     try:
         result = await buy_product(user.id, pid, current)
     except BuyError as e:
-        key = {"insufficient": "insufficient", "no_stock": "no_stock"}.get(str(e), "no_stock")
-        await cb.answer(t(lang, key), show_alert=True)
+        code = str(e)
+        key = code if code in ("insufficient", "no_stock", "max_qty", "supplier_down") else "no_stock"
+        msg = t(lang, key, n=(p_view.max_qty if p_view else ""))
+        if acked:
+            await cb.message.answer(msg)
+        else:
+            await cb.answer(msg, show_alert=True)
         return
 
     await state.update_data(**{f"qty:{pid}": 0})
-    joined = "\n\n".join(f"`{p}`" for p in result.payloads)
-    text = t(
-        lang,
-        "buy_success",
-        qty=result.quantity,
-        name=result.product_name,
-        total=fmt_usdt(result.total),
-        payload=joined,
-    )
-    await cb.message.answer(text, parse_mode="Markdown")
+    if result.status == "pending":
+        text = t(lang, "supplier_pending", id=result.order_id, total=fmt_usdt(result.total))
+        if result.payloads:
+            text += "\n\n" + "\n\n".join(f"`{p}`" for p in result.payloads)
+    else:
+        joined = "\n\n".join(f"`{p}`" for p in result.payloads)
+        text = t(
+            lang,
+            "buy_success",
+            qty=result.quantity,
+            name=result.product_name,
+            total=fmt_usdt(result.total),
+            payload=joined,
+        )
+        if result.refunded > 0:
+            text += "\n\n" + t(lang, "supplier_partial_refund", amount=fmt_usdt(result.refunded))
+    try:
+        await cb.message.answer(text, parse_mode="Markdown")
+    except Exception:
+        # supplier payloads may contain Markdown-breaking characters (_ * `)
+        await cb.message.answer(text)
     await notify_balance_change(user.id, -result.total, f"order:{result.order_id}")
     # Admin notification (esp. for unlimited products that need manual fulfillment)
     p_obj = await get_product(pid)
@@ -135,7 +160,8 @@ async def buy(cb: CallbackQuery, state: FSMContext) -> None:
     fresh = await get_or_create_user(cb.from_user.id, cb.from_user.username, cb.from_user.full_name)
     if p:
         await _render(cb, p, 0, lang, fresh.balance)
-    await cb.answer("✅")
+    if not acked:
+        await cb.answer("✅")
 
 
 @router.callback_query(F.data.startswith("share:"))

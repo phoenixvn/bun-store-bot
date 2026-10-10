@@ -64,7 +64,7 @@ async def buy(body: BuyBody, user_id: int = Depends(auth)):
     try:
         result = await buy_product(user_id, body.product_id, body.quantity, via_api=True)
     except BuyError as e:
-        raise HTTPException(400, str(e))
+        raise HTTPException(503 if str(e) == "supplier_down" else 400, str(e))
     async with session_scope() as s:
         ak = await s.get(ApiKey, user_id)
         if ak:
@@ -76,12 +76,39 @@ async def buy(body: BuyBody, user_id: int = Depends(auth)):
         "total": str(result.total),
         "discount_percent": str(result.discount_percent),
         "payloads": result.payloads,
+        # pending: items still arriving from the supplier — poll /v1/orders/{order_id}
+        "status": result.status,
+        "refunded": str(result.refunded),
+    }
+
+
+@app.get("/v1/orders/{order_id}")
+async def order_detail(order_id: int, user_id: int = Depends(auth)):
+    from bot.models import StockItem
+
+    async with session_scope() as s:
+        o = await s.get(Order, order_id)
+        if not o or o.user_id != user_id:
+            raise HTTPException(404, "order not found")
+        items = (
+            await s.execute(
+                select(StockItem.payload).where(StockItem.order_id == order_id).order_by(StockItem.id)
+            )
+        ).scalars().all()
+    return {
+        "id": o.id,
+        "product": o.product_name,
+        "quantity": o.quantity,
+        "total": str(o.total),
+        "status": o.status,
+        "payloads": list(items),
+        "created_at": o.created_at.isoformat(),
     }
 
 
 @app.get("/")
 async def root():
-    return {"name": "Bami Store API", "endpoints": ["/v1/balance", "/v1/orders", "/v1/buy"]}
+    return {"name": "Bami Store API", "endpoints": ["/v1/balance", "/v1/orders", "/v1/orders/{id}", "/v1/buy"]}
 
 
 @app.post("/cryptomus/webhook")

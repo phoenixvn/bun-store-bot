@@ -15,6 +15,7 @@ from bot.config import settings
 from bot.handlers import admin, api, deposit, language, product, profile, shop, start, support
 from bot.payments import bep20, binance_pay, binance_spot, cryptomus, ton, tron
 from bot import runtime_settings
+from bot.services import supplier
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("bot")
@@ -50,6 +51,9 @@ async def main() -> None:
     asyncio.create_task(binance_spot.poll_loop())
     asyncio.create_task(binance_pay.poll_loop())
     asyncio.create_task(cryptomus.poll_loop())
+    # FatCat supplier: catalog sync + retry of orders whose delivery is still pending
+    asyncio.create_task(supplier.sync_loop())
+    asyncio.create_task(supplier.reconcile_loop())
 
     # FastAPI sidecar — Railway injects $PORT; fall back to API_PORT for local dev
     port = int(os.environ.get("PORT") or settings.api_port)

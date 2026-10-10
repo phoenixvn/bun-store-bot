@@ -49,6 +49,10 @@ Polled chains can't tell which user sent which tx, so the user first creates a `
 
 `bot/services/order.py::buy_product` selects un-sold `StockItem` rows with `with_for_update(skip_locked=True)` to make concurrent purchases safe — but only when `dialect.name != "sqlite"`. Preserve that branch when modifying; sqlite is supported via `aiosqlite` for local dev.
 
+### FatCat supplier (`bot/suppliers/fatcat.py`, `bot/services/supplier.py`)
+
+Products with `supplier_product_id` set are sourced live from the FatCat reseller API (VND prices; converted with `VND_PER_USDT` + `SUPPLIER_MARKUP_PERCENT`, both runtime-editable). `sync_loop` upserts the catalog; `buy_product` branches to `_buy_from_supplier`, which debits the user and commits a `pending` Order with a `request_id` **before** calling `/api/buy`. `SupplierError` (definitive 4xx) → refund; `SupplierUnreachable` (timeout/5xx/429) → stay pending, `reconcile_loop` retries with the **same** `request_id` (FatCat dedupes on it). Never refund on an unknown outcome and never generate a new `request_id` for an existing order. Delivered items are stored as sold `StockItem` rows.
+
 ### Support bridge via forum topics
 
 `User.support_topic_id` stores the Telegram forum-topic ID inside `SUPPORT_GROUP_ID` (a forum-enabled supergroup where the bot is admin). DMs from the user are `copy_to`'d into that thread; admin replies in the thread are `copy_to`'d back to the user (`bot/handlers/support.py`).

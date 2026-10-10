@@ -76,6 +76,15 @@ class Settings(BaseSettings):
 
     deposit_poll_interval: int = Field(default=30, alias="DEPOSIT_POLL_INTERVAL")
 
+    # FatCat Store reseller API — products sourced live from the supplier
+    supplier_api_url: str = Field(default="https://api.fatcatstore.click", alias="SUPPLIER_API_URL")
+    supplier_api_key: str = Field(default="", alias="SUPPLIER_API_KEY")
+    vnd_per_usdt: float = Field(default=26000.0, alias="VND_PER_USDT")
+    supplier_markup_percent: float = Field(default=20.0, alias="SUPPLIER_MARKUP_PERCENT")
+    supplier_sync_interval: int = Field(default=60, alias="SUPPLIER_SYNC_INTERVAL")
+    # new supplier products go live immediately (True) or wait for admin to activate (False)
+    supplier_auto_activate: bool = Field(default=True, alias="SUPPLIER_AUTO_ACTIVATE")
+
     @property
     def admin_ids(self) -> List[int]:
         return [int(x) for x in self.admin_ids_raw.split(",") if x.strip().isdigit()]

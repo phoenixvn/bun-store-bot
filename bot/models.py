@@ -79,6 +79,13 @@ class Product(Base):
     unlimited: Mapped[bool] = mapped_column(Boolean, default=False)  # ∞ stock (digital)
     discount_tiers: Mapped[list] = mapped_column(JSON, default=list)
     # [{"min": 5, "percent": 5.0}, {"min": 15, "percent": 12.0}]
+    # FatCat supplier link — set means stock/fulfillment come from the supplier API
+    supplier_product_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, unique=True, index=True)
+    supplier_price_vnd: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    supplier_stock: Mapped[int] = mapped_column(Integer, default=0)
+    supplier_max_qty: Mapped[int] = mapped_column(Integer, default=50)
+    supplier_available: Mapped[bool] = mapped_column(Boolean, default=False)  # listed by supplier
+    supplier_auto_price: Mapped[bool] = mapped_column(Boolean, default=True)  # sync rewrites price
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     stock_items: Mapped[list["StockItem"]] = relationship(
@@ -116,9 +123,15 @@ class Order(Base):
     unit_price: Mapped[Decimal] = mapped_column(Numeric(18, 4))
     total: Mapped[Decimal] = mapped_column(Numeric(18, 4))
     discount_percent: Mapped[Decimal] = mapped_column(Numeric(6, 2), default=Decimal("0"))
-    status: Mapped[str] = mapped_column(String(32), default="completed")  # completed | refunded
+    status: Mapped[str] = mapped_column(String(32), default="completed", index=True)
+    # completed | pending (supplier still delivering) | partial | refunded
     expired: Mapped[bool] = mapped_column(Boolean, default=False)  # warranty expired flag
     via_api: Mapped[bool] = mapped_column(Boolean, default=False)
+    # supplier fulfillment: request_id is written BEFORE calling /api/buy and re-used on retry
+    request_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, unique=True, index=True)
+    supplier_order_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    supplier_attempts: Mapped[int] = mapped_column(Integer, default=0)
+    supplier_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
