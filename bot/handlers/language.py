@@ -24,8 +24,8 @@ async def lang_set(cb: CallbackQuery) -> None:
         return
     await set_language(cb.from_user.id, code)
     await cb.answer(t(code, "lang_set"), show_alert=False)
-    from bot.utils import fmt_usdt
+    from bot.handlers.start import menu_text
+    from bot.ui import edit_or_send
 
     user = await get_or_create_user(cb.from_user.id, cb.from_user.username, cb.from_user.full_name)
-    text = f"{t(code, 'welcome')}\n\n💳 {t(code, 'balance_line', balance=fmt_usdt(user.balance))}"
-    await cb.message.edit_text(text, reply_markup=main_menu(code))
+    await edit_or_send(cb, menu_text(user), main_menu(code), parse_mode="Markdown")

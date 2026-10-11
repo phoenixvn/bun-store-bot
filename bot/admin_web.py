@@ -1229,6 +1229,10 @@ async def supplier_sync(_: str = Depends(require_auth)):
 
     try:
         r = await supplier.sync_products()
+        if r.events:
+            import asyncio
+
+            asyncio.create_task(supplier.notify_stock_events(r.events))
         msg = (
             f"Synced {r.seen} products: +{len(r.created)} new, {len(r.linked)} linked, "
             f"-{len(r.removed)} delisted, {r.repriced} repriced."

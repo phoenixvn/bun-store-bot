@@ -43,6 +43,7 @@ async def orders(user_id: int = Depends(auth), limit: int = 20):
         return [
             {
                 "id": o.id,
+                "code": o.code,
                 "product": o.product_name,
                 "quantity": o.quantity,
                 "total": str(o.total),
@@ -72,6 +73,7 @@ async def buy(body: BuyBody, user_id: int = Depends(auth)):
             ak.api_spend = (ak.api_spend or Decimal("0")) + Decimal(result.total)
     return {
         "order_id": result.order_id,
+        "code": result.code,
         "quantity": result.quantity,
         "total": str(result.total),
         "discount_percent": str(result.discount_percent),
@@ -97,6 +99,7 @@ async def order_detail(order_id: int, user_id: int = Depends(auth)):
         ).scalars().all()
     return {
         "id": o.id,
+        "code": o.code,
         "product": o.product_name,
         "quantity": o.quantity,
         "total": str(o.total),
@@ -128,6 +131,33 @@ async def cryptomus_webhook(request: Request):
         # acknowledge anyway — the poller will retry; Cryptomus retries on non-200
         pass
     return {"status": "ok"}
+
+
+@app.post("/sepay/webhook")
+async def sepay_webhook(request: Request, authorization: str = Header("")):
+    """SePay bank-transfer notification (VietQR top-ups). Auth: `Authorization: Apikey <key>`."""
+    import hmac
+
+    from bot.config import settings
+    from bot.payments import vietqr
+
+    if not settings.sepay_webhook_key:
+        raise HTTPException(503, "SePay webhook not configured")
+    if not hmac.compare_digest(authorization.strip(), f"Apikey {settings.sepay_webhook_key}"):
+        raise HTTPException(401, "bad api key")
+    try:
+        data = await request.json()
+    except Exception:
+        raise HTTPException(400, "bad json")
+    if not isinstance(data, dict) or data.get("id") is None:
+        raise HTTPException(400, "missing id")
+    status = await vietqr.handle_transfer(
+        str(data["id"]),
+        int(float(data.get("transferAmount") or 0)),
+        str(data.get("content") or data.get("description") or ""),
+        str(data.get("transferType") or ""),
+    )
+    return {"success": True, "status": status}
 
 
 @app.get("/healthz")

@@ -7,29 +7,38 @@ from aiogram.types import CallbackQuery, Message
 from bot.i18n import t
 from bot.keyboards import main_menu
 from bot.services import get_or_create_user
+from bot.ui import edit_or_send
 from bot.utils import fmt_usdt
 
 router = Router()
 
 
-async def _send_menu(message: Message, user) -> None:
+def menu_text(user) -> str:
     lang = user.language
-    text = f"{t(lang, 'welcome')}\n\n💳 {t(lang, 'balance_line', balance=fmt_usdt(user.balance))}"
-    await message.answer(text, reply_markup=main_menu(lang))
+    return (
+        f"{t(lang, 'welcome')}\n\n"
+        f"{t(lang, 'quick_guide')}\n\n"
+        f"{t(lang, 'balance_line', balance=fmt_usdt(user.balance))}"
+    )
 
 
 @router.message(CommandStart(deep_link=True))
 async def start_deep(message: Message, command: CommandObject) -> None:
-    ref_code = None
-    if command.args and command.args.startswith("ref_"):
-        ref_code = command.args[4:]
+    args = command.args or ""
+    ref_code = args[4:] if args.startswith("ref_") else None
     user = await get_or_create_user(
         message.from_user.id,
         message.from_user.username,
         message.from_user.full_name,
         referrer_code=ref_code,
     )
-    await _send_menu(message, user)
+    if args.startswith("p_") and args[2:].isdigit():
+        # deep link from a restock/sale post: open the product directly
+        from bot.handlers.product import send_product
+
+        await send_product(message, user, int(args[2:]))
+        return
+    await message.answer(menu_text(user), reply_markup=main_menu(user.language), parse_mode="Markdown")
 
 
 @router.message(CommandStart())
@@ -39,7 +48,7 @@ async def start_cmd(message: Message) -> None:
         message.from_user.username,
         message.from_user.full_name,
     )
-    await _send_menu(message, user)
+    await message.answer(menu_text(user), reply_markup=main_menu(user.language), parse_mode="Markdown")
 
 
 @router.callback_query(F.data == "menu")
@@ -47,12 +56,7 @@ async def menu_cb(cb: CallbackQuery) -> None:
     user = await get_or_create_user(
         cb.from_user.id, cb.from_user.username, cb.from_user.full_name
     )
-    lang = user.language
-    text = f"{t(lang, 'welcome')}\n\n💳 {t(lang, 'balance_line', balance=fmt_usdt(user.balance))}"
-    try:
-        await cb.message.edit_text(text, reply_markup=main_menu(lang))
-    except Exception:
-        await cb.message.answer(text, reply_markup=main_menu(lang))
+    await edit_or_send(cb, menu_text(user), main_menu(user.language), parse_mode="Markdown")
     await cb.answer()
 
 

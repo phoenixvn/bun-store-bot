@@ -53,6 +53,14 @@ Polled chains can't tell which user sent which tx, so the user first creates a `
 
 Products with `supplier_product_id` set are sourced live from the FatCat reseller API (VND prices; converted with `VND_PER_USDT` + `SUPPLIER_MARKUP_PERCENT`, both runtime-editable). `sync_loop` upserts the catalog; `buy_product` branches to `_buy_from_supplier`, which debits the user and commits a `pending` Order with a `request_id` **before** calling `/api/buy`. `SupplierError` (definitive 4xx) → refund; `SupplierUnreachable` (timeout/5xx/429) → stay pending, `reconcile_loop` retries with the **same** `request_id` (FatCat dedupes on it). Never refund on an unknown outcome and never generate a new `request_id` for an existing order. Delivered items are stored as sold `StockItem` rows.
 
+### VietQR top-up (`bot/payments/vietqr.py`)
+
+Wallet stays USDT; VND bank transfers are converted at the `VND_PER_USDT` quoted when the QR was created. A PENDING `Deposit(method="vietqr", external_id=<BM memo>)` is only a lookup for *who* paid — a QR can be paid twice, so credits are keyed on the SePay transaction id (first transfer approves the memo row with `raw.sepay_tx`; later ones go through `record_and_credit(external_id="sepay:<tx>")`). Credit the received amount, not the requested one. Transfers without a `BM…` code are ignored (the bank account may be personal).
+
+### UI conventions
+
+Screens edit the message in place via `bot/ui.py::edit_or_send` (falls back to a new message for photos such as QR codes). Product/order screens use `parse_mode="HTML"` with `html.escape` — supplier names/descriptions break Markdown. Inline buttons may carry Bot API `style` (`success`/`primary`/`danger`); never pass `style=None`. Restock/sale DMs come from `supplier.sync_products` events (compare supplier VND, never USDT price) with a per-product `last_notified_at` cooldown.
+
 ### Support bridge via forum topics
 
 `User.support_topic_id` stores the Telegram forum-topic ID inside `SUPPORT_GROUP_ID` (a forum-enabled supergroup where the bot is admin). DMs from the user are `copy_to`'d into that thread; admin replies in the thread are `copy_to`'d back to the user (`bot/handlers/support.py`).

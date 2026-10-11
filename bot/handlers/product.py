@@ -1,109 +1,176 @@
 from __future__ import annotations
 
 from decimal import Decimal
+from html import escape
 
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery
+from aiogram.types import CallbackQuery, Message
 
 from bot.config import settings
 from bot.i18n import t
-from bot.keyboards import numpad
+from bot.keyboards import numpad, product_detail_kb
 from bot.services import get_or_create_user
-from bot.services.order import BuyError, ProductView, buy_product, get_product
+from bot.services.order import BuyError, BuyResult, ProductView, buy_product, get_product
 from bot.services.webhook import notify_balance_change
+from bot.ui import edit_or_send
 from bot.utils import best_discount, fmt_usdt
 
 router = Router()
 
+HTML = "HTML"
 
-async def _render(cb: CallbackQuery, p: ProductView, qty: int, lang: str, balance: Decimal):
-    stock_str = "∞" if p.unlimited else str(p.in_stock)
-    discount = best_discount(qty, p.discount_tiers)
-    unit = Decimal(p.price)
-    total = (unit * qty * (Decimal("100") - discount) / Decimal("100")).quantize(Decimal("0.0001"))
 
-    lines = [f"{p.emoji} *{t(lang,'product')}:* {p.name}"]
+def _price_html(p: ProductView) -> str:
     if p.original_price is not None:
-        from datetime import datetime, timezone
-        remain = ""
-        if p.promo_until:
-            delta = p.promo_until - datetime.now(timezone.utc)
-            secs = max(0, int(delta.total_seconds()))
-            if secs >= 3600:
-                remain = f" — còn {secs//3600}h {(secs%3600)//60}m"
-            else:
-                remain = f" — còn {secs//60}m"
-        lines.append(f"🔥 *PROMO*: ~{fmt_usdt(p.original_price)}~ → *{fmt_usdt(p.price)}* USDT{remain}")
-    else:
-        lines.append(f"{t(lang,'orig_price')}: {fmt_usdt(p.price)} USDT")
-    lines.append(f"{t(lang,'stock_now')}: {stock_str}")
+        return f"<s>{fmt_usdt(p.original_price)}</s> → 🔥 <b>{fmt_usdt(p.price)} USDT</b>"
+    return f"<b>{fmt_usdt(p.price)} USDT</b>"
+
+
+def detail_text(p: ProductView, lang: str) -> str:
+    stock = "∞" if p.unlimited else str(p.in_stock)
+    lines = [f"{escape(p.emoji or '📦')} <b>{escape(p.name)}</b>", ""]
+    if p.description:
+        lines += [f"📝 {escape(p.description.strip())}", ""]
+    lines.append(f"💰 {t(lang, 'price_label')}: {_price_html(p)}")
+    lines.append(f"📦 {t(lang, 'stock_label')}: <b>{stock}</b>")
     if p.max_qty:
         lines.append(t(lang, "max_per_order", n=p.max_qty))
-    lines.append(f"{t(lang,'warranty')}: {p.warranty}")
+    if p.warranty:
+        lines.append(f"🛡 {t(lang, 'warranty_label')}: {escape(p.warranty)}")
     if p.discount_tiers:
         lines.append("")
         for tier in p.discount_tiers:
-            lines.append(
-                t(lang, "promo", min=int(tier["min"]), percent=tier["percent"])
-            )
-    lines.append("")
-    lines.append(f"{t(lang,'qty')}: {qty}")
-    lines.append(f"{t(lang,'total')}: {fmt_usdt(total)} USDT")
-    lines.append(f"{t(lang,'wallet')}: {fmt_usdt(balance)} USDT")
-    text = "\n".join(lines)
-    try:
-        await cb.message.edit_text(text, reply_markup=numpad(lang, p.id, qty), parse_mode="Markdown")
-    except Exception:
-        await cb.message.answer(text, reply_markup=numpad(lang, p.id, qty), parse_mode="Markdown")
+            lines.append(t(lang, "promo", min=int(tier["min"]), percent=tier["percent"]))
+    if p.note:
+        lines += ["", f"⚠️ {escape(p.note.strip())}"]
+    return "\n".join(lines)
+
+
+def payloads_html(payloads: list[str]) -> str:
+    return "\n\n".join(f"<code>{escape(x)}</code>" for x in payloads)
+
+
+def buy_result_text(lang: str, r: BuyResult) -> str:
+    if r.status == "pending":
+        text = t(lang, "supplier_pending", id=r.code or r.order_id, total=fmt_usdt(r.total))
+        if r.payloads:
+            text += "\n\n" + payloads_html(r.payloads)
+        return text
+    text = t(
+        lang,
+        "buy_success",
+        qty=r.quantity,
+        name=escape(r.product_name),
+        total=fmt_usdt(r.total),
+        payload=payloads_html(r.payloads),
+    )
+    if r.code:
+        text += "\n\n" + t(lang, "order_code_line", code=r.code)
+    if r.refunded > 0:
+        text += "\n\n" + t(lang, "supplier_partial_refund", amount=fmt_usdt(r.refunded))
+    return text
+
+
+# ---------------------------------------------------------------- product page
+
+async def send_product(message: Message, user, pid: int) -> None:
+    """Product page as a fresh message (deep links / restock posts)."""
+    p = await get_product(pid)
+    if not p:
+        await message.answer(t(user.language, "no_stock"))
+        return
+    await message.answer(
+        detail_text(p, user.language), reply_markup=product_detail_kb(user.language, p), parse_mode=HTML
+    )
 
 
 @router.callback_query(F.data.startswith("prod:"))
 async def product(cb: CallbackQuery, state: FSMContext) -> None:
     pid = int(cb.data.split(":")[1])
     p = await get_product(pid)
-    if not p:
-        await cb.answer("Not found", show_alert=True)
-        return
     user = await get_or_create_user(cb.from_user.id, cb.from_user.username, cb.from_user.full_name)
+    if not p:
+        await cb.answer(t(user.language, "no_stock"), show_alert=True)
+        return
     await state.update_data(**{f"qty:{pid}": 0})
-    await _render(cb, p, 0, user.language, user.balance)
+    await edit_or_send(cb, detail_text(p, user.language), product_detail_kb(user.language, p), HTML)
     await cb.answer()
+
+
+# ---------------------------------------------------------------- quantity picker
+
+async def _render_qty(cb: CallbackQuery, p: ProductView, qty: int, lang: str, balance: Decimal):
+    discount = best_discount(qty, p.discount_tiers)
+    unit = Decimal(p.price)
+    total = (unit * qty * (Decimal("100") - discount) / Decimal("100")).quantize(Decimal("0.0001"))
+    stock = "∞" if p.unlimited else str(p.in_stock)
+    lines = [
+        f"🛒 <b>{escape(p.name)}</b>",
+        f"💰 {t(lang, 'price_label')}: {_price_html(p)}",
+        f"📦 {t(lang, 'stock_label')}: {stock}",
+    ]
+    if p.max_qty:
+        lines.append(t(lang, "max_per_order", n=p.max_qty))
+    lines += [
+        "",
+        f"{t(lang, 'qty')}: <b>{qty}</b>",
+        f"{t(lang, 'total')}: <b>{fmt_usdt(total)} USDT</b>" + (f" (-{discount}%)" if discount else ""),
+        f"{t(lang, 'wallet')}: {fmt_usdt(balance)} USDT",
+    ]
+    if total > balance:
+        lines.append(t(lang, "need_topup", amount=fmt_usdt(total - balance)))
+    await edit_or_send(cb, "\n".join(lines), numpad(lang, p.id, qty), HTML)
+
+
+async def _set_qty(cb: CallbackQuery, state: FSMContext, pid: int, qty: int) -> None:
+    p = await get_product(pid)
+    if not p:
+        await cb.answer()
+        return
+    if p.max_qty and qty > p.max_qty:
+        qty = p.max_qty
+    if not p.unlimited and qty > p.in_stock:
+        qty = max(0, p.in_stock)
+    await state.update_data(**{f"qty:{pid}": qty})
+    user = await get_or_create_user(cb.from_user.id, cb.from_user.username, cb.from_user.full_name)
+    await _render_qty(cb, p, qty, user.language, user.balance)
+    await cb.answer()
+
+
+@router.callback_query(F.data.startswith("pbuy:"))
+async def pick_qty(cb: CallbackQuery, state: FSMContext) -> None:
+    await _set_qty(cb, state, int(cb.data.split(":")[1]), 1)
+
+
+@router.callback_query(F.data.startswith("qset:"))
+async def quick_qty(cb: CallbackQuery, state: FSMContext) -> None:
+    _, pid_s, n = cb.data.split(":")
+    await _set_qty(cb, state, int(pid_s), int(n))
 
 
 @router.callback_query(F.data.startswith("qty:"))
 async def qty(cb: CallbackQuery, state: FSMContext) -> None:
     _, pid_s, digit = cb.data.split(":")
     pid = int(pid_s)
-    data = await state.get_data()
-    current = int(data.get(f"qty:{pid}", 0))
+    current = int((await state.get_data()).get(f"qty:{pid}", 0))
     if digit == "del":
         current = current // 10
     else:
-        current = current * 10 + int(digit)
-        if current > 9999:
-            current = 9999
-    p = await get_product(pid)
-    if not p:
-        await cb.answer()
-        return
-    if p.max_qty and current > p.max_qty:
-        current = p.max_qty
-    await state.update_data(**{f"qty:{pid}": current})
-    user = await get_or_create_user(cb.from_user.id, cb.from_user.username, cb.from_user.full_name)
-    await _render(cb, p, current, user.language, user.balance)
-    await cb.answer()
+        current = min(9999, current * 10 + int(digit))
+    await _set_qty(cb, state, pid, current)
 
+
+# ---------------------------------------------------------------- buy
 
 @router.callback_query(F.data.startswith("buy:"))
 async def buy(cb: CallbackQuery, state: FSMContext) -> None:
     pid = int(cb.data.split(":")[1])
-    data = await state.get_data()
-    current = int(data.get(f"qty:{pid}", 0))
+    current = int((await state.get_data()).get(f"qty:{pid}", 0))
     user = await get_or_create_user(cb.from_user.id, cb.from_user.username, cb.from_user.full_name)
     lang = user.language
     if current <= 0:
-        await cb.answer("⚠️ Quantity = 0", show_alert=True)
+        await cb.answer(t(lang, "qty_zero"), show_alert=True)
         return
     p_view = await get_product(pid)
     # supplier orders can take a few seconds — ack the button now so Telegram doesn't time out
@@ -123,43 +190,22 @@ async def buy(cb: CallbackQuery, state: FSMContext) -> None:
         return
 
     await state.update_data(**{f"qty:{pid}": 0})
-    if result.status == "pending":
-        text = t(lang, "supplier_pending", id=result.order_id, total=fmt_usdt(result.total))
-        if result.payloads:
-            text += "\n\n" + "\n\n".join(f"`{p}`" for p in result.payloads)
-    else:
-        joined = "\n\n".join(f"`{p}`" for p in result.payloads)
-        text = t(
-            lang,
-            "buy_success",
-            qty=result.quantity,
-            name=result.product_name,
-            total=fmt_usdt(result.total),
-            payload=joined,
-        )
-        if result.refunded > 0:
-            text += "\n\n" + t(lang, "supplier_partial_refund", amount=fmt_usdt(result.refunded))
-    try:
-        await cb.message.answer(text, parse_mode="Markdown")
-    except Exception:
-        # supplier payloads may contain Markdown-breaking characters (_ * `)
-        await cb.message.answer(text)
+    # delivered goods go in their own message so they stay in the chat history
+    await cb.message.answer(buy_result_text(lang, result), parse_mode=HTML)
     await notify_balance_change(user.id, -result.total, f"order:{result.order_id}")
-    # Admin notification (esp. for unlimited products that need manual fulfillment)
     p_obj = await get_product(pid)
     if p_obj and p_obj.unlimited:
         from bot.bot_instance import notify_admin
+
         await notify_admin(
-            f"🛒 *NEW ORDER #{result.order_id}* — needs manual fulfillment\n"
-            f"User: {user.full_name or '—'} (@{user.username or '—'}) `{user.id}`\n"
+            f"🛒 NEW ORDER #{result.code or result.order_id} — needs manual fulfillment\n"
+            f"User: {user.full_name or '—'} (@{user.username or '—'}) {user.id}\n"
             f"Product: {result.product_name}\n"
-            f"Qty: {result.quantity} | Total: {fmt_usdt(result.total)} USDT"
+            f"Qty: {result.quantity} | Total: {fmt_usdt(result.total)} USDT",
+            parse_mode=None,
         )
-    # re-render with zero qty
-    p = await get_product(pid)
-    fresh = await get_or_create_user(cb.from_user.id, cb.from_user.username, cb.from_user.full_name)
-    if p:
-        await _render(cb, p, 0, lang, fresh.balance)
+    if p_obj:
+        await edit_or_send(cb, detail_text(p_obj, lang), product_detail_kb(lang, p_obj), HTML)
     if not acked:
         await cb.answer("✅")
 
@@ -185,4 +231,4 @@ async def note(cb: CallbackQuery) -> None:
     if not p:
         await cb.answer()
         return
-    await cb.answer(p.note or p.description or "—", show_alert=True)
+    await cb.answer((p.note or p.description or "—")[:200], show_alert=True)

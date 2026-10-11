@@ -17,12 +17,13 @@ from aiogram.types import (
 from bot.config import settings
 from bot.database import session_scope
 from bot.i18n import t
-from bot.keyboards import cancel_kb, deposit_menu
+from bot.keyboards import cancel_kb, deposit_menu, vietqr_amounts_kb
 from bot.models import Deposit, DepositStatus
-from bot.payments import cryptomus
+from bot.payments import cryptomus, vietqr
 from bot.payments.common import record_and_credit
 from bot.services import get_or_create_user
-from bot.utils import fmt_usdt, parse_decimal
+from bot.ui import edit_or_send
+from bot.utils import fmt_usdt, fmt_vnd, parse_decimal
 
 router = Router()
 
@@ -35,14 +36,132 @@ class DepositFSM(StatesGroup):
     binance_spot_bep20_amount = State()
     binance_spot_trc20_amount = State()
     cryptomus_amount = State()
+    vietqr_amount = State()
 
 
 @router.callback_query(F.data == "dep:menu")
 async def menu(cb: CallbackQuery, state: FSMContext) -> None:
     await state.clear()
     user = await get_or_create_user(cb.from_user.id, cb.from_user.username, cb.from_user.full_name)
-    await cb.message.edit_text(t(user.language, "deposit_menu"), reply_markup=deposit_menu(user.language))
+    await edit_or_send(cb, t(user.language, "deposit_menu"), deposit_menu(user.language))
     await cb.answer()
+
+
+# ---------------------------------------------------------------- VietQR (bank transfer)
+
+@router.callback_query(F.data == "dep:vqr")
+async def vietqr_pick(cb: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()
+    user = await get_or_create_user(cb.from_user.id, cb.from_user.username, cb.from_user.full_name)
+    lang = user.language
+    if not vietqr.enabled():
+        await cb.answer(t(lang, "vqr_disabled"), show_alert=True)
+        return
+    text = t(
+        lang,
+        "vqr_prompt",
+        min=fmt_vnd(settings.vietqr_min_vnd),
+        rate=fmt_vnd(settings.vnd_per_usdt),
+    )
+    await edit_or_send(cb, text, vietqr_amounts_kb(lang), parse_mode="Markdown")
+    await cb.answer()
+
+
+@router.callback_query(F.data == "dep:vqr:custom")
+async def vietqr_custom(cb: CallbackQuery, state: FSMContext) -> None:
+    user = await get_or_create_user(cb.from_user.id, cb.from_user.username, cb.from_user.full_name)
+    await state.set_state(DepositFSM.vietqr_amount)
+    await edit_or_send(
+        cb,
+        t(user.language, "vqr_enter_amount", min=fmt_vnd(settings.vietqr_min_vnd)),
+        cancel_kb(user.language, "dep:vqr"),
+    )
+    await cb.answer()
+
+
+async def _send_vietqr(target: Message, user, vnd: int) -> None:
+    lang = user.language
+    dep_id, memo, usdt = await vietqr.create_session(user.id, vnd)
+    caption = t(
+        lang,
+        "vqr_caption",
+        vnd=fmt_vnd(vnd),
+        usdt=fmt_usdt(usdt),
+        bank=settings.bank_code,
+        account=settings.bank_account,
+        name=settings.bank_account_name or "—",
+        memo=memo,
+    )
+    caption += "\n\n" + t(lang, "vqr_auto" if vietqr.auto_confirm() else "vqr_manual")
+    rows = []
+    if not vietqr.auto_confirm():
+        rows.append([InlineKeyboardButton(text=t(lang, "vqr_done_btn"), callback_data=f"dep:vqrdone:{dep_id}")])
+    rows.append([InlineKeyboardButton(text=t(lang, "main_menu_btn"), callback_data="menu")])
+    kb = InlineKeyboardMarkup(inline_keyboard=rows)
+    try:
+        await target.answer_photo(vietqr.qr_url(vnd, memo), caption=caption, reply_markup=kb, parse_mode="HTML")
+    except Exception:
+        # QR image service unreachable — the account details alone are enough to pay
+        await target.answer(caption, reply_markup=kb, parse_mode="HTML")
+
+
+def _parse_vnd(text: str) -> int | None:
+    digits = "".join(ch for ch in (text or "") if ch.isdigit())
+    if not digits:
+        return None
+    v = int(digits)
+    if (text or "").strip().lower().endswith("k"):
+        v *= 1000
+    return v
+
+
+@router.callback_query(F.data.startswith("dep:vqr:"))
+async def vietqr_amount_btn(cb: CallbackQuery, state: FSMContext) -> None:
+    raw = cb.data.split(":")[2]
+    if not raw.isdigit():
+        await cb.answer()
+        return
+    user = await get_or_create_user(cb.from_user.id, cb.from_user.username, cb.from_user.full_name)
+    if not vietqr.enabled():
+        await cb.answer(t(user.language, "vqr_disabled"), show_alert=True)
+        return
+    await state.clear()
+    await cb.answer()
+    await _send_vietqr(cb.message, user, int(raw))
+
+
+@router.message(StateFilter(DepositFSM.vietqr_amount))
+async def vietqr_amount_entered(msg: Message, state: FSMContext) -> None:
+    user = await get_or_create_user(msg.from_user.id, msg.from_user.username, msg.from_user.full_name)
+    lang = user.language
+    vnd = _parse_vnd(msg.text or "")
+    if not vnd or vnd < settings.vietqr_min_vnd or vnd > 100_000_000:
+        await msg.answer(t(lang, "vqr_enter_amount", min=fmt_vnd(settings.vietqr_min_vnd)))
+        return
+    await state.clear()
+    await _send_vietqr(msg, user, vnd)
+
+
+@router.callback_query(F.data.startswith("dep:vqrdone:"))
+async def vietqr_done(cb: CallbackQuery) -> None:
+    """Manual mode (no SePay): user says they paid -> ping admin to approve."""
+    from bot.bot_instance import notify_admin
+
+    dep_id = int(cb.data.split(":")[2])
+    user = await get_or_create_user(cb.from_user.id, cb.from_user.username, cb.from_user.full_name)
+    async with session_scope() as s:
+        d = await s.get(Deposit, dep_id)
+        if not d or d.user_id != user.id or d.status != DepositStatus.PENDING.value:
+            await cb.answer("✅")
+            return
+        memo, vnd, usdt = d.external_id, (d.raw or {}).get("vnd"), d.amount
+    await notify_admin(
+        f"🏦 VietQR top-up claimed — check the bank and approve deposit #{dep_id} at /admin/deposits\n"
+        f"User: {user.full_name or '—'} (@{user.username or '—'}) {user.id}\n"
+        f"Amount: {int(vnd or 0):,} VND = {usdt} USDT | Memo: {memo}",
+        parse_mode=None,
+    )
+    await cb.answer(t(user.language, "vqr_claimed"), show_alert=True)
 
 
 @router.callback_query(F.data == "dep:binance")

@@ -84,6 +84,17 @@ class Settings(BaseSettings):
     supplier_sync_interval: int = Field(default=60, alias="SUPPLIER_SYNC_INTERVAL")
     # new supplier products go live immediately (True) or wait for admin to activate (False)
     supplier_auto_activate: bool = Field(default=True, alias="SUPPLIER_AUTO_ACTIVATE")
+    # DM opted-in users when supplier products restock / get cheaper
+    restock_notify: bool = Field(default=True, alias="RESTOCK_NOTIFY")
+    restock_cooldown_min: int = Field(default=180, alias="RESTOCK_COOLDOWN_MIN")
+
+    # VietQR bank transfer top-up (VND -> USDT at VND_PER_USDT). Auto-credit via SePay.
+    bank_code: str = Field(default="", alias="BANK_CODE")  # VietQR bank code, e.g. MB, VCB, TCB
+    bank_account: str = Field(default="", alias="BANK_ACCOUNT")
+    bank_account_name: str = Field(default="", alias="BANK_ACCOUNT_NAME")
+    vietqr_min_vnd: int = Field(default=10000, alias="VIETQR_MIN_VND")
+    sepay_webhook_key: str = Field(default="", alias="SEPAY_WEBHOOK_KEY")  # "Apikey" auth on webhook
+    sepay_api_token: str = Field(default="", alias="SEPAY_API_TOKEN")  # optional poll fallback
 
     @property
     def admin_ids(self) -> List[int]:

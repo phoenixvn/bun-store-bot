@@ -7,8 +7,11 @@ from bot.i18n import t
 from bot.keyboards import shop_kb
 from bot.services import get_or_create_user
 from bot.services.order import list_products
+from bot.ui import edit_or_send
 
 router = Router()
+
+PER_PAGE = 12
 
 
 @router.callback_query(F.data.startswith("shop:"))
@@ -17,10 +20,9 @@ async def shop(cb: CallbackQuery) -> None:
     page = int(page_str)
     user = await get_or_create_user(cb.from_user.id, cb.from_user.username, cb.from_user.full_name)
     emoji_filter = None if flt == "all" else flt
-    products, pages = await list_products(page, emoji_filter=emoji_filter)
+    products, pages, total = await list_products(page, per_page=PER_PAGE, emoji_filter=emoji_filter)
     text = t(user.language, "products_available")
-    try:
-        await cb.message.edit_text(text, reply_markup=shop_kb(user.language, products, page, pages, flt))
-    except Exception:
-        await cb.message.answer(text, reply_markup=shop_kb(user.language, products, page, pages, flt))
+    if not products:
+        text += "\n\n" + t(user.language, "no_products")
+    await edit_or_send(cb, text, shop_kb(user.language, products, page, pages, flt, total))
     await cb.answer()

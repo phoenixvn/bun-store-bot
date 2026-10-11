@@ -7,7 +7,9 @@ from bot.i18n import T, t
 from bot.keyboards import profile_kb, back_btn
 from bot.services import get_or_create_user, toggle_notifications
 from bot.services.order import list_user_orders
-from bot.utils import fmt_usdt
+from bot.config import settings
+from bot.ui import edit_or_send
+from bot.utils import fmt_usdt, fmt_vnd
 
 router = Router()
 
@@ -24,7 +26,7 @@ async def profile(cb: CallbackQuery) -> None:
         lang_code=lang.upper(),
         joined=user.created_at.strftime("%Y-%m-%d"),
     )
-    await cb.message.edit_text(text, reply_markup=profile_kb(lang, user.notifications), parse_mode="Markdown")
+    await edit_or_send(cb, text, profile_kb(lang, user.notifications), parse_mode="Markdown")
     await cb.answer()
 
 
@@ -45,37 +47,47 @@ async def notif(cb: CallbackQuery) -> None:
     await cb.answer("🔔 " + ("ON" if on else "OFF"))
 
 
+ORDERS_PER_PAGE = 5
+
+STATUS_ICON = {"completed": "✅", "partial": "🟡", "pending": "⏳", "refunded": "↩️"}
+
+
 @router.callback_query(F.data.startswith("orders:"))
 async def orders(cb: CallbackQuery) -> None:
     page = int(cb.data.split(":")[1])
     user = await get_or_create_user(cb.from_user.id, cb.from_user.username, cb.from_user.full_name)
     lang = user.language
-    rows, pages = await list_user_orders(user.id, page)
-    text = "💼 " + t(lang, "orders_title")
+    rows, pages = await list_user_orders(user.id, page, per_page=ORDERS_PER_PAGE)
+    text = t(lang, "orders_hint") if rows else t(lang, "no_orders")
     kb_rows: list[list[InlineKeyboardButton]] = []
-    if not rows:
-        kb_rows.append([InlineKeyboardButton(text=t(lang, "no_orders"), callback_data="noop")])
     for o in rows:
-        label = f"{o.product_name[:28]} x{o.quantity}"
-        status = t(lang, "expired" if o.expired else "valid")
-        kb_rows.append(
-            [
-                InlineKeyboardButton(text=label, callback_data=f"order:{o.id}"),
-                InlineKeyboardButton(text=status, callback_data="noop"),
-            ]
-        )
-    kb_rows.append(
-        [InlineKeyboardButton(text=t(lang, "page", cur=page + 1, total=pages), callback_data="noop")]
-    )
+        code = f"#{o.code}" if o.code else f"#{o.id}"
+        label = f"{STATUS_ICON.get(o.status, '•')} {code} • {o.product_name[:30]} x{o.quantity}"
+        kb_rows.append([InlineKeyboardButton(text=label, callback_data=f"order:{o.id}")])
     nav: list[InlineKeyboardButton] = []
     if page > 0:
         nav.append(InlineKeyboardButton(text=t(lang, "prev"), callback_data=f"orders:{page-1}"))
+    if pages > 1:
+        nav.append(InlineKeyboardButton(text=t(lang, "page", cur=page + 1, total=pages), callback_data="noop"))
     if page + 1 < pages:
         nav.append(InlineKeyboardButton(text=t(lang, "next"), callback_data=f"orders:{page+1}"))
     if nav:
         kb_rows.append(nav)
-    kb_rows.append([back_btn(lang, "profile")])
-    await cb.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows))
+    kb_rows.append([back_btn(lang)])
+    await edit_or_send(cb, text, InlineKeyboardMarkup(inline_keyboard=kb_rows))
+    await cb.answer()
+
+
+@router.callback_query(F.data == "wallet")
+async def wallet(cb: CallbackQuery) -> None:
+    from bot.keyboards import wallet_kb
+
+    user = await get_or_create_user(cb.from_user.id, cb.from_user.username, cb.from_user.full_name)
+    lang = user.language
+    text = t(lang, "wallet_card", balance=fmt_usdt(user.balance))
+    if settings.bank_account and settings.vnd_per_usdt:
+        text += "\n" + t(lang, "wallet_vnd_hint", rate=fmt_vnd(settings.vnd_per_usdt))
+    await edit_or_send(cb, text, wallet_kb(lang), parse_mode="Markdown")
     await cb.answer()
 
 
@@ -156,25 +168,27 @@ async def order_detail(cb: CallbackQuery) -> None:
             await s.execute(select(StockItem).where(StockItem.order_id == order_id))
         ).scalars().all()
         payloads = [it.payload for it in items]
+    from html import escape
+
+    code = f"#{o.code}" if o.code else f"#{o.id}"
     lines = [
-        f"🧾 *Order #{o.id}*",
-        f"📦 {o.product_name} x{o.quantity}",
-        f"💰 Total: {fmt_usdt(o.total)} USDT",
-        f"🎁 Discount: {o.discount_percent}%",
+        f"🧾 <b>{t(lang, 'order_label')} {code}</b>",
+        f"📦 {escape(o.product_name)} x{o.quantity}",
+        f"💰 {t(lang, 'total')}: {fmt_usdt(o.total)} USDT",
         f"📅 {o.created_at.strftime('%Y-%m-%d %H:%M')}",
-        f"Status: {o.status}",
+        f"{STATUS_ICON.get(o.status, '•')} {t(lang, 'status_' + o.status)}",
     ]
     if payloads:
         lines.append("")
-        lines.append("*Keys/Payloads:*")
-        lines.extend(f"`{p}`" for p in payloads)
+        lines.extend(f"<code>{escape(p)}</code>" for p in payloads)
+    lines += ["", t(lang, "order_support_hint")]
     kb = InlineKeyboardMarkup(
-        inline_keyboard=[[InlineKeyboardButton(text=t(lang, "back"), callback_data="orders:0")]]
+        inline_keyboard=[
+            [InlineKeyboardButton(text=t(lang, "support"), callback_data="support")],
+            [InlineKeyboardButton(text=t(lang, "back"), callback_data="orders:0")],
+        ]
     )
-    try:
-        await cb.message.edit_text("\n".join(lines), reply_markup=kb, parse_mode="Markdown")
-    except Exception:
-        await cb.message.answer("\n".join(lines), reply_markup=kb, parse_mode="Markdown")
+    await edit_or_send(cb, "\n".join(lines), kb, parse_mode="HTML")
     await cb.answer()
 
 

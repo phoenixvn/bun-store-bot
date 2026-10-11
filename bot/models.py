@@ -86,6 +86,9 @@ class Product(Base):
     supplier_max_qty: Mapped[int] = mapped_column(Integer, default=50)
     supplier_available: Mapped[bool] = mapped_column(Boolean, default=False)  # listed by supplier
     supplier_auto_price: Mapped[bool] = mapped_column(Boolean, default=True)  # sync rewrites price
+    last_notified_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )  # restock/sale DM cooldown
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     stock_items: Mapped[list["StockItem"]] = relationship(
@@ -114,6 +117,8 @@ class Order(Base):
     __tablename__ = "orders"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    # public order code shown to customers (#DH…); id stays internal
+    code: Mapped[Optional[str]] = mapped_column(String(16), nullable=True, unique=True, index=True)
     user_id: Mapped[int] = mapped_column(
         BigInteger, ForeignKey("users.id", ondelete="CASCADE"), index=True
     )

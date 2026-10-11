@@ -10,7 +10,7 @@ from sqlalchemy import func, select, update
 
 from bot.database import session_scope
 from bot.models import Order, Product, StockItem, User
-from bot.utils import best_discount, effective_price, is_promo_active
+from bot.utils import best_discount, effective_price, gen_order_code, is_promo_active
 
 log = logging.getLogger(__name__)
 
@@ -54,7 +54,7 @@ async def _count_stock(session, product_id: int) -> int:
 
 async def list_products(
     page: int, per_page: int = 10, emoji_filter: str | None = None
-) -> tuple[list[ProductView], int]:
+) -> tuple[list[ProductView], int, int]:
     async with session_scope() as s:
         base = select(Product).where(_visible())
         cnt_base = select(func.count(Product.id)).where(_visible())
@@ -90,7 +90,7 @@ async def list_products(
         import math
 
         pages = max(1, math.ceil(total / per_page))
-        return views, pages
+        return views, pages, total
 
 
 async def get_product(product_id: int) -> Optional[ProductView]:
@@ -131,6 +131,7 @@ class BuyResult:
     product_name: str
     status: str = "completed"  # completed | partial | pending
     refunded: Decimal = Decimal("0")
+    code: str = ""
 
 
 async def buy_product(
@@ -192,6 +193,7 @@ async def buy_product(
             total=total,
             discount_percent=discount,
             via_api=via_api,
+            code=gen_order_code(),
         )
         s.add(order)
         await s.flush()
@@ -210,6 +212,7 @@ async def buy_product(
             discount_percent=discount,
             payloads=payloads,
             product_name=p.name,
+            code=order.code,
         )
 
 
@@ -309,12 +312,13 @@ async def _buy_from_supplier(
             discount_percent=discount,
             via_api=via_api,
             status="pending",
+            code=gen_order_code(),
         )
         s.add(order)
         await s.flush()
         # random suffix: a DB reset must never collide with an old supplier order id
         order.request_id = f"bm{order.id}-{secrets.token_hex(4)}"
-        order_id, product_name = order.id, p.name
+        order_id, product_name, order_code = order.id, p.name, order.code
 
     # 3. call the supplier (idempotent on request_id); unresolved => reconcile_loop
     out = await supplier.fulfill_with_retry(order_id)
@@ -336,4 +340,5 @@ async def _buy_from_supplier(
         product_name=product_name,
         status=out.status,
         refunded=out.refunded,
+        code=order_code,
     )

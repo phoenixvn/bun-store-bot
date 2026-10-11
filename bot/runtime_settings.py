@@ -56,6 +56,13 @@ EDITABLE: dict[str, tuple[str, Callable[[str], Any], str, str]] = {
     "SUPPLIER_MARKUP_PERCENT":  ("supplier_markup_percent", _as_float, "Markup over supplier cost (%)", "Supplier"),
     "SUPPLIER_SYNC_INTERVAL":   ("supplier_sync_interval", _as_int, "Product sync interval (seconds)", "Supplier"),
     "SUPPLIER_AUTO_ACTIVATE":   ("supplier_auto_activate", _as_bool, "New supplier products go live (true/false)", "Supplier"),
+    "RESTOCK_NOTIFY":           ("restock_notify", _as_bool, "DM users on restock/sale (true/false)", "Supplier"),
+    "RESTOCK_COOLDOWN_MIN":     ("restock_cooldown_min", _as_int, "Min minutes between DMs per product", "Supplier"),
+    # VietQR
+    "BANK_CODE":                ("bank_code", str, "VietQR bank code (MB, VCB, TCB…)", "VietQR"),
+    "BANK_ACCOUNT":             ("bank_account", str, "Bank account number", "VietQR"),
+    "BANK_ACCOUNT_NAME":        ("bank_account_name", str, "Account holder name (no accents)", "VietQR"),
+    "VIETQR_MIN_VND":           ("vietqr_min_vnd", _as_int, "Minimum top-up (VND)", "VietQR"),
 }
 
 

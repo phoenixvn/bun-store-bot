@@ -31,6 +31,16 @@ def gen_ref_code(n: int = 8) -> str:
     return "".join(secrets.choice(alphabet) for _ in range(n))
 
 
+def gen_order_code() -> str:
+    alphabet = string.ascii_uppercase + string.digits
+    return "DH" + "".join(secrets.choice(alphabet) for _ in range(7))
+
+
+def fmt_vnd(value: Decimal | float | int) -> str:
+    """50000 -> '50.000đ'"""
+    return f"{int(Decimal(str(value))):,}".replace(",", ".") + "đ"
+
+
 def gen_api_key() -> str:
     return "bami_" + secrets.token_urlsafe(32)
 

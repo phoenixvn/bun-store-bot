@@ -25,8 +25,16 @@ log = logging.getLogger(__name__)
 @router.callback_query(F.data == "support")
 async def support_menu(cb: CallbackQuery) -> None:
     user = await get_or_create_user(cb.from_user.id, cb.from_user.username, cb.from_user.full_name)
-    text = t(user.language, "support_title") + "\n\n" + t(user.language, "support_msg")
-    await cb.message.edit_text(text, reply_markup=support_kb(user.language), parse_mode="Markdown")
+    from bot.ui import edit_or_send
+
+    text = (
+        t(user.language, "support_title")
+        + "\n\n"
+        + t(user.language, "support_msg")
+        + "\n\n"
+        + t(user.language, "support_order_code_hint")
+    )
+    await edit_or_send(cb, text, support_kb(user.language), parse_mode="Markdown")
     await cb.answer()
 
 

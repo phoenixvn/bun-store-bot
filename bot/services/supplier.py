@@ -71,6 +71,47 @@ class SyncResult:
     linked: list[str] = field(default_factory=list)
     removed: list[str] = field(default_factory=list)
     repriced: int = 0
+    events: list["StockEvent"] = field(default_factory=list)
+
+
+@dataclass
+class StockEvent:
+    """Something customers want to hear about. Sent after the sync commits."""
+    kind: str  # new | restock | sale
+    product_id: int
+    added: int = 0
+    stock: int = 0
+    old_vnd: int = 0
+    new_vnd: int = 0
+
+
+RESTOCK_MIN_ADD = 5  # FatCat stock oscillates by 1-2 as it pulls from source; ignore that noise
+SALE_MIN_DROP = 0.05  # >= 5% cheaper at the supplier
+
+
+def _detect_event(p: Product, old_stock: int, old_vnd: int | None, is_new: bool) -> StockEvent | None:
+    """Compare pre-sync values with what _apply_supplier_fields just wrote.
+    Uses supplier VND, never the USDT sell price, so editing VND_PER_USDT can't fire SALE."""
+    if not p.is_active or not p.supplier_available:
+        return None
+    now = datetime.now(timezone.utc)
+    last = p.last_notified_at
+    if last is not None and last.tzinfo is None:
+        last = last.replace(tzinfo=timezone.utc)
+    cooldown = timedelta(minutes=max(1, settings.restock_cooldown_min or 180))
+    if last is not None and now - last < cooldown:
+        return None
+    new_stock, new_vnd = p.supplier_stock or 0, p.supplier_price_vnd or 0
+    ev = None
+    if is_new and new_stock > 0:
+        ev = StockEvent("new", 0, added=new_stock, stock=new_stock)
+    elif old_vnd and new_vnd and new_vnd <= old_vnd * (1 - SALE_MIN_DROP) and new_stock > 0:
+        ev = StockEvent("sale", p.id, stock=new_stock, old_vnd=old_vnd, new_vnd=new_vnd)
+    elif new_stock > 0 and (old_stock == 0 or new_stock - old_stock >= RESTOCK_MIN_ADD):
+        ev = StockEvent("restock", p.id, added=new_stock - old_stock, stock=new_stock)
+    if ev is not None:
+        p.last_notified_at = now
+    return ev
 
 
 # keyword -> category emoji from keyboards.CATEGORIES, so new items show under shop filters
@@ -93,7 +134,7 @@ def _guess_emoji(name: str) -> str:
     return "🔧"
 
 
-async def sync_products() -> SyncResult:
+async def sync_products(detect_events: bool = True) -> SyncResult:
     remote = await fatcat.products()
     res = SyncResult(seen=len(remote))
     by_id = {sp.id: sp for sp in remote}
@@ -103,8 +144,10 @@ async def sync_products() -> SyncResult:
         unlinked_by_name = {
             (p.name or "").strip().lower(): p for p in rows if p.supplier_product_id is None
         }
+        pending_new: list[tuple[Product, StockEvent]] = []
         for sp in remote:
             p = linked.get(sp.id)
+            is_new = False
             if p is None:
                 # admin may have hand-imported this product earlier — link instead of duplicating
                 p = unlinked_by_name.pop(sp.name.strip().lower(), None)
@@ -122,14 +165,73 @@ async def sync_products() -> SyncResult:
                     )
                     s.add(p)
                     res.created.append(sp.name)
+                    is_new = True
+            old_stock, old_vnd = (p.supplier_stock or 0), p.supplier_price_vnd
             if _apply_supplier_fields(p, sp):
                 res.repriced += 1
+            ev = _detect_event(p, old_stock, old_vnd, is_new) if detect_events else None
+            if ev is not None:
+                if is_new:
+                    pending_new.append((p, ev))
+                else:
+                    res.events.append(ev)
         for spid, p in linked.items():
             if spid not in by_id and p.supplier_available:
                 p.supplier_available = False
                 p.supplier_stock = 0
                 res.removed.append(p.name)
+        if pending_new:
+            await s.flush()  # new products need ids for their "Buy now" button
+            for p, ev in pending_new:
+                ev.product_id = p.id
+                res.events.append(ev)
     return res
+
+
+async def notify_stock_events(events: list[StockEvent]) -> int:
+    """DM opted-in users about restocks/sales with a Buy-now button. Throttled to stay
+    under Telegram's ~30 msg/s bot limit. Returns messages sent."""
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+    from bot.bot_instance import bot
+    from bot.i18n import t
+    from bot.utils import fmt_usdt
+
+    if not events or not bot or not settings.restock_notify:
+        return 0
+    async with session_scope() as s:
+        users = (
+            await s.execute(select(User.id, User.language).where(User.notifications.is_(True)))
+        ).all()
+        prods = {p.id: p for p in (await s.execute(
+            select(Product).where(Product.id.in_([e.product_id for e in events]))
+        )).scalars().all()}
+    sent = 0
+    for ev in events:
+        p = prods.get(ev.product_id)
+        if p is None:
+            continue
+        for uid, lang in users:
+            if ev.kind == "sale":
+                text = t(
+                    lang, "notify_sale", name=p.name, old=fmt_usdt(sell_usdt(ev.old_vnd)),
+                    new=fmt_usdt(p.price), stock=ev.stock,
+                )
+            else:
+                key = "notify_new" if ev.kind == "new" else "notify_restock"
+                text = t(lang, key, name=p.name, added=ev.added, stock=ev.stock, price=fmt_usdt(p.price))
+            kb = InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(text=t(lang, "buy_now"), callback_data=f"prod:{p.id}", style="success")
+            ]])
+            try:
+                await bot.send_message(uid, text, reply_markup=kb)
+                sent += 1
+            except Exception as e:
+                # blocked the bot / deleted account — skip quietly
+                log.debug("stock notify to %s failed: %s", uid, e)
+            await asyncio.sleep(0.05)
+    log.info("stock notify: %d events, %d messages", len(events), sent)
+    return sent
 
 
 async def sync_loop() -> None:
@@ -139,7 +241,7 @@ async def sync_loop() -> None:
     first = True
     while True:
         try:
-            r = await sync_products()
+            r = await sync_products(detect_events=not first)
             if first or r.created or r.removed or r.linked:
                 log.info(
                     "supplier sync: %d listed, +%d new, %d linked, -%d removed, %d repriced",
@@ -152,6 +254,9 @@ async def sync_loop() -> None:
                 lines += [f"➕ {n}" for n in r.created]
                 lines += [f"➖ {n}" for n in r.removed]
                 await notify_admin("\n".join(lines), parse_mode=None)
+            # the very first sync after boot only builds the baseline
+            if not first and r.events:
+                asyncio.create_task(notify_stock_events(r.events))
             first = False
         except Exception as e:
             log.warning("supplier sync failed: %s", e)
@@ -300,26 +405,30 @@ async def _deliver_late(order_id: int, out: FulfillOutcome) -> None:
         await notify_balance_change(o.user_id, out.refunded, f"refund:{order_id}")
     if not bot:
         return
+    from bot.handlers.product import buy_result_text
+    from bot.services.order import BuyResult
+
     if out.status == "refunded":
-        text = t(lang, "supplier_order_refunded", id=order_id, amount=fmt_usdt(out.refunded))
+        text = t(lang, "supplier_order_refunded", id=o.code or order_id, amount=fmt_usdt(out.refunded))
     else:
-        text = t(
+        text = buy_result_text(
             lang,
-            "buy_success",
-            qty=len(out.payloads),
-            name=o.product_name,
-            total=fmt_usdt(o.total),
-            payload="\n\n".join(f"`{x}`" for x in out.payloads),
+            BuyResult(
+                order_id=o.id,
+                quantity=len(out.payloads),
+                total=Decimal(o.total),
+                discount_percent=Decimal(o.discount_percent or 0),
+                payloads=out.payloads,
+                product_name=o.product_name,
+                status=out.status,
+                refunded=out.refunded,
+                code=o.code or "",
+            ),
         )
-        if out.refunded > 0:
-            text += "\n\n" + t(lang, "supplier_partial_refund", amount=fmt_usdt(out.refunded))
     try:
-        await bot.send_message(o.user_id, text, parse_mode="Markdown")
-    except Exception:
-        try:
-            await bot.send_message(o.user_id, text)
-        except Exception as e:
-            log.warning("late delivery DM to %s failed: %s", o.user_id, e)
+        await bot.send_message(o.user_id, text, parse_mode="HTML")
+    except Exception as e:
+        log.warning("late delivery DM to %s failed: %s", o.user_id, e)
 
 
 async def reconcile_once() -> int:

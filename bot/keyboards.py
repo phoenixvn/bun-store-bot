@@ -14,20 +14,48 @@ from bot.utils import fmt_usdt
 
 def main_menu(lang: str) -> InlineKeyboardMarkup:
     rows = [
-        [InlineKeyboardButton(text=t(lang, "shop"), callback_data="shop:0:all")],
+        [InlineKeyboardButton(text=t(lang, "shop"), callback_data="shop:0:all", style="success")],
         [
-            InlineKeyboardButton(text=t(lang, "deposit"), callback_data="dep:menu"),
-            InlineKeyboardButton(text=t(lang, "profile"), callback_data="profile"),
+            InlineKeyboardButton(text=t(lang, "my_orders_btn"), callback_data="orders:0"),
+            InlineKeyboardButton(text=t(lang, "wallet_btn"), callback_data="wallet"),
         ],
         [
             InlineKeyboardButton(text=t(lang, "support"), callback_data="support"),
-            InlineKeyboardButton(text=t(lang, "shopee"), url="https://shopee.vn"),
+            InlineKeyboardButton(text=t(lang, "language_btn"), callback_data="lang:menu"),
         ],
         [
+            InlineKeyboardButton(text=t(lang, "profile"), callback_data="profile"),
             InlineKeyboardButton(text=t(lang, "earn"), callback_data="earn"),
-            InlineKeyboardButton(text=t(lang, "channel"), url=settings.channel_url or "https://t.me"),
         ],
     ]
+    if settings.channel_url:
+        rows.append([InlineKeyboardButton(text=t(lang, "channel"), url=settings.channel_url)])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def wallet_kb(lang: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=t(lang, "topup_btn"), callback_data="dep:menu", style="success")],
+            [InlineKeyboardButton(text=t(lang, "my_deposits"), callback_data="deposits:0")],
+            [back_btn(lang)],
+        ]
+    )
+
+
+def vietqr_amounts_kb(lang: str) -> InlineKeyboardMarkup:
+    from bot.utils import fmt_vnd
+
+    quick = [50_000, 100_000, 200_000, 500_000]
+    rows = [
+        [
+            InlineKeyboardButton(text=fmt_vnd(a), callback_data=f"dep:vqr:{a}")
+            for a in quick[i : i + 2]
+        ]
+        for i in range(0, len(quick), 2)
+    ]
+    rows.append([InlineKeyboardButton(text=t(lang, "vqr_custom"), callback_data="dep:vqr:custom")])
+    rows.append([back_btn(lang, "dep:menu")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -37,6 +65,10 @@ def back_btn(lang: str, cb: str = "menu") -> InlineKeyboardButton:
 
 def deposit_menu(lang: str) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
+    if settings.bank_account and settings.bank_code:
+        rows.append(
+            [InlineKeyboardButton(text=t(lang, "vietqr"), callback_data="dep:vqr", style="success")]
+        )
     if settings.cryptomus_api_key and settings.cryptomus_merchant_id:
         rows.append(
             [InlineKeyboardButton(text=t(lang, "cryptomus"), callback_data="dep:cryptomus")]
@@ -76,7 +108,7 @@ def deposit_menu(lang: str) -> InlineKeyboardMarkup:
             ton_tron.append(InlineKeyboardButton(text=t(lang, "tron"), callback_data="dep:tron"))
         rows.append(ton_tron)
     rows.append([InlineKeyboardButton(text=t(lang, "other"), callback_data="dep:other")])
-    rows.append([back_btn(lang)])
+    rows.append([back_btn(lang, "wallet")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -94,7 +126,7 @@ def language_kb(lang: str) -> InlineKeyboardMarkup:
         rows.append(
             [InlineKeyboardButton(text=label, callback_data=f"lang:{code}") for code, label in chunk]
         )
-    rows.append([back_btn(lang, "profile")])
+    rows.append([back_btn(lang)])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -112,42 +144,78 @@ CATEGORIES = [
 ]
 
 
-def shop_kb(lang: str, products: list, page: int, total_pages: int, flt: str = "all") -> InlineKeyboardMarkup:
+# stock -> button colour (Bot API `style`): plenty / running low / sold out
+LOW_STOCK = 5
+
+
+def stock_style(p) -> str:
+    if p.unlimited or p.in_stock > LOW_STOCK:
+        return "success"
+    return "primary" if p.in_stock > 0 else "danger"
+
+
+def product_label(p) -> str:
+    stock = "∞" if p.unlimited else str(p.in_stock)
+    price = f"🔥{fmt_usdt(p.price)}" if p.original_price is not None else fmt_usdt(p.price)
+    return f"{p.emoji} {p.name} | {price} USDT | 📦 {stock}".strip()
+
+
+SHOW_FILTERS_ABOVE = 10  # small catalogs read better without the category grid
+
+
+def shop_kb(
+    lang: str, products: list, page: int, total_pages: int, flt: str = "all", total: int = 0
+) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
     for p in products:
-        stock_str = "∞" if p.unlimited else str(p.in_stock)
-        if p.original_price is not None:
-            label = f"🔥 {p.emoji} {p.name} - {fmt_usdt(p.price)} USDT ̶({fmt_usdt(p.original_price)}̶)"
-        else:
-            label = f"{p.emoji} {p.name} - {fmt_usdt(p.price)} USDT (Stock: {stock_str})"
-        rows.append([InlineKeyboardButton(text=label, callback_data=f"prod:{p.id}")])
-    # Category filter row(s)
-    cat_chunk: list[InlineKeyboardButton] = [
-        InlineKeyboardButton(
-            text=("✅" if flt == "all" else "") + t(lang, "filter_all"),
-            callback_data="shop:0:all",
+        rows.append(
+            [InlineKeyboardButton(text=product_label(p), callback_data=f"prod:{p.id}", style=stock_style(p))]
         )
-    ]
-    for emoji, label in CATEGORIES:
-        marker = "✅" if flt == emoji else ""
-        cat_chunk.append(
-            InlineKeyboardButton(text=f"{marker}{emoji}{label}", callback_data=f"shop:0:{emoji}")
-        )
-    # split into rows of 5 buttons
-    for i in range(0, len(cat_chunk), 5):
-        rows.append(cat_chunk[i : i + 5])
-    nav: list[InlineKeyboardButton] = [
-        InlineKeyboardButton(
-            text=t(lang, "page", cur=page + 1, total=max(1, total_pages)),
-            callback_data="noop",
-        )
-    ]
-    if page + 1 < total_pages:
-        nav.append(InlineKeyboardButton(text=t(lang, "next"), callback_data=f"shop:{page+1}:{flt}"))
-    if page > 0:
-        nav.insert(0, InlineKeyboardButton(text=t(lang, "prev"), callback_data=f"shop:{page-1}:{flt}"))
-    rows.append(nav)
+    if total > SHOW_FILTERS_ABOVE or flt != "all":
+        cat_chunk: list[InlineKeyboardButton] = [
+            InlineKeyboardButton(
+                text=("✅" if flt == "all" else "") + t(lang, "filter_all"),
+                callback_data="shop:0:all",
+            )
+        ]
+        for emoji, label in CATEGORIES:
+            marker = "✅" if flt == emoji else ""
+            cat_chunk.append(
+                InlineKeyboardButton(text=f"{marker}{emoji}{label}", callback_data=f"shop:0:{emoji}")
+            )
+        for i in range(0, len(cat_chunk), 5):
+            rows.append(cat_chunk[i : i + 5])
+    if total_pages > 1:
+        nav: list[InlineKeyboardButton] = [
+            InlineKeyboardButton(
+                text=t(lang, "page", cur=page + 1, total=max(1, total_pages)),
+                callback_data="noop",
+            )
+        ]
+        if page + 1 < total_pages:
+            nav.append(InlineKeyboardButton(text=t(lang, "next"), callback_data=f"shop:{page+1}:{flt}"))
+        if page > 0:
+            nav.insert(0, InlineKeyboardButton(text=t(lang, "prev"), callback_data=f"shop:{page-1}:{flt}"))
+        rows.append(nav)
     rows.append([back_btn(lang)])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def product_detail_kb(lang: str, p) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    if p.unlimited or p.in_stock > 0:
+        rows.append(
+            [InlineKeyboardButton(text=t(lang, "buy_now"), callback_data=f"pbuy:{p.id}", style="success")]
+        )
+    else:
+        rows.append([InlineKeyboardButton(text=t(lang, "out_of_stock"), callback_data="noop", style="danger")])
+    rows.append(
+        [
+            InlineKeyboardButton(text=t(lang, "topup_wallet"), callback_data="dep:menu"),
+            InlineKeyboardButton(text=t(lang, "share_link"), callback_data=f"share:{p.id}"),
+        ]
+    )
+    rows.append([back_btn(lang, "shop:0:all")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -155,8 +223,8 @@ def numpad(lang: str, product_id: int, qty: int) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
     rows.append(
         [
-            InlineKeyboardButton(text=t(lang, "set_qty", qty=qty), callback_data=f"buy:{product_id}"),
-            InlineKeyboardButton(text=t(lang, "del"), callback_data=f"qty:{product_id}:del"),
+            InlineKeyboardButton(text=f"{n}", callback_data=f"qset:{product_id}:{n}")
+            for n in (1, 2, 3, 5, 10)
         ]
     )
     rows.append(
@@ -171,14 +239,18 @@ def numpad(lang: str, product_id: int, qty: int) -> InlineKeyboardMarkup:
             for d in (6, 7, 8, 9, 0)
         ]
     )
-    rows.append([InlineKeyboardButton(text=t(lang, "topup_wallet"), callback_data="dep:menu")])
     rows.append(
         [
-            InlineKeyboardButton(text=t(lang, "share_link"), callback_data=f"share:{product_id}"),
-            InlineKeyboardButton(text=t(lang, "view_note"), callback_data=f"note:{product_id}"),
+            InlineKeyboardButton(
+                text=t(lang, "confirm_buy", qty=qty),
+                callback_data=f"buy:{product_id}",
+                **({"style": "success"} if qty > 0 else {}),
+            ),
+            InlineKeyboardButton(text=t(lang, "del"), callback_data=f"qty:{product_id}:del"),
         ]
     )
-    rows.append([back_btn(lang, "shop:0:all")])
+    rows.append([InlineKeyboardButton(text=t(lang, "topup_wallet"), callback_data="dep:menu")])
+    rows.append([back_btn(lang, f"prod:{product_id}")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
