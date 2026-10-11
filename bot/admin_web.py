@@ -661,9 +661,14 @@ async def deposits_list(_: str = Depends(require_auth)):
                 f"<button class='btn btn-sm btn-danger'>Reject</button></form>"
             )
         ext = escape((d.external_id or "")[:32])
+        amount_html = f"{d.amount}"
+        vnd = (d.raw or {}).get("vnd_received") or (d.raw or {}).get("vnd")
+        if vnd:
+            # VietQR: admin matches against the bank statement in VND + memo
+            amount_html += f"<br><b>{int(vnd):,} VND</b>"
         body += (
             f"<tr><td>{d.id}</td><td>{d.user_id}</td>"
-            f"<td><code>{escape(d.method)}</code></td><td>{d.amount}</td>"
+            f"<td><code>{escape(d.method)}</code></td><td>{amount_html}</td>"
             f"<td>{escape(d.status)}</td><td><code>{ext}</code></td>"
             f"<td>{d.created_at.strftime('%Y-%m-%d %H:%M')}</td><td>{actions}</td></tr>"
         )
@@ -673,16 +678,17 @@ async def deposits_list(_: str = Depends(require_auth)):
 
 @router.post("/deposits/{dep_id}/approve")
 async def deposits_approve(dep_id: int, _: str = Depends(require_auth)):
-    from bot.services import credit_balance
+    from bot.payments.common import _post_credit
 
     async with session_scope() as s:
-        d = await s.get(Deposit, dep_id)
-        uid, amount = None, None
+        d = await s.get(Deposit, dep_id, with_for_update=True)
+        uid, amount, method = None, None, None
         if d and d.status == DepositStatus.PENDING.value:
             d.status = DepositStatus.APPROVED.value
-            uid, amount = d.user_id, d.amount
+            uid, amount, method = d.user_id, d.amount, d.method
     if uid is not None:
-        await credit_balance(uid, Decimal(amount))
+        # same pipeline as automatic deposits: balance, referral, webhook, DM the user
+        await _post_credit(uid, dep_id, method, Decimal(amount))
     return RedirectResponse("/admin/deposits", status_code=303)
 
 

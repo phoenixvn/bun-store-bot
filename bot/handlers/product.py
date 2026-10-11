@@ -191,7 +191,12 @@ async def buy(cb: CallbackQuery, state: FSMContext) -> None:
 
     await state.update_data(**{f"qty:{pid}": 0})
     # delivered goods go in their own message so they stay in the chat history
-    await cb.message.answer(buy_result_text(lang, result), parse_mode=HTML)
+    text = buy_result_text(lang, result)
+    try:
+        await cb.message.answer(text, parse_mode=HTML)
+    except Exception:
+        # must never lose a delivery over a formatting error — resend raw
+        await cb.message.answer(text)
     await notify_balance_change(user.id, -result.total, f"order:{result.order_id}")
     p_obj = await get_product(pid)
     if p_obj and p_obj.unlimited:

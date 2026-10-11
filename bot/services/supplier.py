@@ -427,8 +427,11 @@ async def _deliver_late(order_id: int, out: FulfillOutcome) -> None:
         )
     try:
         await bot.send_message(o.user_id, text, parse_mode="HTML")
-    except Exception as e:
-        log.warning("late delivery DM to %s failed: %s", o.user_id, e)
+    except Exception:
+        try:
+            await bot.send_message(o.user_id, text)
+        except Exception as e:
+            log.warning("late delivery DM to %s failed: %s", o.user_id, e)
 
 
 async def reconcile_once() -> int:

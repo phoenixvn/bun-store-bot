@@ -125,6 +125,11 @@ async def handle_transfer(tx_id: str, vnd: int, content: str, transfer_type: str
                 first = True
             elif raw.get("sepay_tx") == str(tx_id):
                 return "duplicate"
+            elif not raw.get("sepay_tx"):
+                # approved by an admin before SePay saw it — this IS that payment:
+                # record the tx so a later transfer on the same QR still credits, don't pay twice
+                dep.raw = {**raw, **raw_tx}
+                return "duplicate"
             else:
                 first = False
     if first is None:
